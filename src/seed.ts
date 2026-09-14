@@ -164,8 +164,28 @@ export const seedBookings: Booking[] = [
     },
     allocatedResourceIds: ['r-s1', 'r-s2', 'r-f1', 'r-x1', 'r-t2', 'r-g1'],
     storageItems: [
-      { id: 'st-1', name: '猪肉馅 5kg', zone: '冷藏柜A-2层', putAt: '2026-09-12 08:40', takeAt: '2026-09-12 12:50' },
-      { id: 'st-2', name: '白菜 8kg', zone: '常温暂存架-1号位', putAt: '2026-09-12 08:40', takeAt: '2026-09-12 11:00' }
+      {
+        id: 'st-1', name: '猪肉馅 5kg', zone: '冷藏柜A-2层', category: 'meat-seafood',
+        label: '猪肉馅5kg / 王秀兰 138-0000-1001 / 09-12',
+        putAt: '2026-09-12 08:40', putBy: '张管理', ownerName: '王秀兰', ownerPhone: '138-0000-1001',
+        expectedTakeAt: '2026-09-12 13:00', takeAt: '2026-09-12 12:50', state: 'taken',
+        notifications: [],
+        history: [
+          { at: '2026-09-12 08:40', by: '张管理', action: '入库冷藏柜A-2层，贴标签' },
+          { at: '2026-09-12 12:50', by: '王秀兰', action: '活动结束取走' }
+        ]
+      },
+      {
+        id: 'st-2', name: '白菜 8kg', zone: '常温暂存架-1号位', category: 'vegetable',
+        label: '白菜8kg / 王秀兰 138-0000-1001 / 09-12',
+        putAt: '2026-09-12 08:40', putBy: '张管理', ownerName: '王秀兰', ownerPhone: '138-0000-1001',
+        expectedTakeAt: '2026-09-12 13:00', takeAt: '2026-09-12 11:00', state: 'taken',
+        notifications: [],
+        history: [
+          { at: '2026-09-12 08:40', by: '张管理', action: '入常温暂存架1号位' },
+          { at: '2026-09-12 11:00', by: '王秀兰', action: '取走使用' }
+        ]
+      }
     ],
     incidentIds: [],
     acceptance: {
@@ -252,7 +272,17 @@ export const seedBookings: Booking[] = [
     },
     allocatedResourceIds: ['r-o2', 'r-f1', 'r-f2', 'r-x1', 'r-t1', 'r-g1'],
     storageItems: [
-      { id: 'st-3', name: '淡奶油 6L', zone: '冷藏柜A-3层（团队专用）', putAt: '2026-09-10 13:45', takeAt: '2026-09-10 18:10' }
+      {
+        id: 'st-3', name: '淡奶油 6L', zone: '冷藏柜A-3层（团队专用）', category: 'dairy-egg',
+        label: '淡奶油6L / 周敏 138-0000-2002 / 09-10',
+        putAt: '2026-09-10 13:45', putBy: '张管理', ownerName: '周敏', ownerPhone: '138-0000-2002',
+        expectedTakeAt: '2026-09-10 18:00', takeAt: '2026-09-10 18:10', state: 'taken',
+        notifications: [],
+        history: [
+          { at: '2026-09-10 13:45', by: '张管理', action: '混放整改后入团队专用层，密封贴签' },
+          { at: '2026-09-10 18:10', by: '周敏', action: '活动结束取走' }
+        ]
+      }
     ],
     incidentIds: ['i-4', 'i-5'],
     acceptance: {
@@ -463,7 +493,19 @@ export const seedBookings: Booking[] = [
     },
     allocatedResourceIds: ['r-s1', 'r-s2', 'r-s3', 'r-o1', 'r-f1', 'r-f2', 'r-x1', 'r-t2', 'r-g1', 'r-g2'],
     storageItems: [
-      { id: 'st-4', name: '炸肉丸半成品', zone: '冷藏柜A-1层', putAt: '2026-09-13 08:30' }
+      {
+        id: 'st-4', name: '炸肉丸半成品（猪肉）3kg', zone: '冷藏柜A-1层', category: 'meat-seafood',
+        label: '炸肉丸半成品3kg / 王秀兰 138-0000-1001 / 09-13',
+        putAt: '2026-09-13 08:30', putBy: '张管理', ownerName: '王秀兰', ownerPhone: '138-0000-1001',
+        expectedTakeAt: '2026-09-13 13:40', state: 'notified',
+        notifications: [
+          { at: '2026-09-13 16:00', by: '张管理', channel: '电话', note: '负责人称次日上午来取，管理员告知肉类不可隔夜存放于公共冰箱' }
+        ],
+        history: [
+          { at: '2026-09-13 08:30', by: '张管理', action: '入库冷藏柜A-1层，贴标签注明负责人与电话' },
+          { at: '2026-09-13 16:00', by: '张管理', action: '超时未取，电话通知负责人' }
+        ]
+      }
     ],
     incidentIds: ['i-3'],
     foodSafetyAck: true,
@@ -495,7 +537,7 @@ export const seedBookings: Booking[] = [
     peopleCount: 18,
     cookingTypes: ['蒸煮', '家常烹饪'],
     isFrying: false,
-    storageNeeded: false,
+    storageNeeded: true,
     equipmentNeeds: ['stove', 'sterilizer', 'tableware', 'sorting'],
     natureNote: '为社区独居老人提供的免费早餐课堂。',
     depositRequired: 0,
@@ -513,7 +555,29 @@ export const seedBookings: Booking[] = [
       photos: []
     },
     allocatedResourceIds: ['r-s2', 'r-x1', 'r-t1', 'r-g1'],
-    storageItems: [],
+    storageItems: [
+      {
+        id: 'st-5', name: '志愿者捐赠青菜 4kg（未使用）', zone: '常温暂存架-2号位', category: 'vegetable',
+        label: '青菜4kg / 陈小明（阳光公益）138-0000-2001 / 09-08',
+        putAt: '2026-09-08 08:20', putBy: '张管理', ownerName: '陈小明', ownerPhone: '138-0000-2001',
+        expectedTakeAt: '2026-09-08 11:00', state: 'disposed',
+        notifications: [
+          { at: '2026-09-08 11:30', by: '张管理', channel: '现场告知', note: '志愿者离场时遗漏，已现场提醒' }
+        ],
+        disposal: {
+          action: 'discard', at: '2026-09-09 09:00', by: '张管理',
+          reason: '公益课堂结束后菜叶萎蔫不宜再用，负责人确认放弃；按公益活动豁免处置费',
+          photos: [ph('🥬', '报废青菜登记照', '张管理', '2026-09-09 09:00')],
+          fee: 0, feeWaived: true, liabilityAck: true,
+          note: '社区工作人员核准公益豁免，不扣押金（本活动免押），仅记录责任提醒'
+        },
+        history: [
+          { at: '2026-09-08 08:20', by: '张管理', action: '入常温暂存架2号位' },
+          { at: '2026-09-08 11:30', by: '张管理', action: '超时未取，现场通知负责人' },
+          { at: '2026-09-09 09:00', by: '张管理', action: '依规报废，公益豁免处置费' }
+        ]
+      }
+    ],
     incidentIds: [],
     acceptance: {
       checkerId: 'u-admin',
@@ -546,7 +610,77 @@ export const seedBookings: Booking[] = [
     timeline: [
       { at: '2026-09-05 14:00', actor: '陈小明', action: '提交公益课堂申请（免押）' },
       { at: '2026-09-05 15:30', actor: '孙社工', action: '核准免押并通过审批', tone: 'green' },
+      { at: '2026-09-08 11:30', actor: '张管理', action: '遗留青菜超时未取，现场通知负责人', tone: 'amber' },
+      { at: '2026-09-09 09:00', actor: '张管理', action: '青菜依规报废，公益豁免处置费并提示责任', tone: 'blue' },
       { at: '2026-09-08 10:50', actor: '张管理', action: '验收完成（垃圾项补清洁）', tone: 'blue' }
+    ]
+  },
+  // 8. 活动取消但食材已提前入库（待管理员处置：通知/待处理/清空，处置影响押金）
+  {
+    id: 'b-008',
+    code: 'NK-20260915-002',
+    applicantId: 'u-res2',
+    applicantKind: 'resident',
+    contactName: '李建国',
+    contactPhone: '138-0000-1002',
+    activityKind: 'private',
+    title: '手工饺子制作（已取消，食材滞留）',
+    date: '2026-09-15',
+    startAt: '18:00',
+    endAt: '20:00',
+    peopleCount: 6,
+    cookingTypes: ['蒸煮'],
+    isFrying: false,
+    storageNeeded: true,
+    storageNote: '虾仁与饺子皮提前一天暂存',
+    equipmentNeeds: ['stove', 'fridge', 'tableware'],
+    natureNote: '家庭聚会，临时取消。',
+    depositRequired: 100,
+    depositPaid: true,
+    depositFree: false,
+    status: 'canceled',
+    approverId: 'u-admin',
+    approveComment: '同意，食材请按时取走。',
+    allocatedResourceIds: [],
+    storageItems: [
+      {
+        id: 'st-6', name: '冷冻虾仁 1.5kg', zone: '冷冻柜B-2层', category: 'meat-seafood',
+        label: '冷冻虾仁1.5kg / 李建国 138-0000-1002 / 09-14',
+        putAt: '2026-09-14 20:10', putBy: '张管理', ownerName: '李建国', ownerPhone: '138-0000-1002',
+        expectedTakeAt: '2026-09-15 20:00', state: 'pending',
+        notifications: [
+          { at: '2026-09-15 09:00', by: '张管理', channel: '电话', note: '活动取消后电话确认，负责人称出差三日后才回' },
+          { at: '2026-09-15 09:05', by: '张管理', channel: '短信', note: '短信告知肉类/海鲜超时处置规则' }
+        ],
+        history: [
+          { at: '2026-09-14 20:10', by: '张管理', action: '提前入库冷冻柜B-2层' },
+          { at: '2026-09-15 08:30', by: '李建国', action: '活动取消' },
+          { at: '2026-09-15 09:00', by: '张管理', action: '电话+短信通知负责人' },
+          { at: '2026-09-15 10:00', by: '张管理', action: '转为待处理食材，等待报废/取回处置' }
+        ]
+      },
+      {
+        id: 'st-7', name: '饺子皮 2kg', zone: '冷藏柜A-2层', category: 'staple',
+        label: '饺子皮2kg / 李建国 138-0000-1002 / 09-14',
+        putAt: '2026-09-14 20:10', putBy: '张管理', ownerName: '李建国', ownerPhone: '138-0000-1002',
+        expectedTakeAt: '2026-09-15 20:00', state: 'stored',
+        notifications: [],
+        history: [
+          { at: '2026-09-14 20:10', by: '张管理', action: '提前入库冷藏柜A-2层' }
+        ]
+      }
+    ],
+    incidentIds: [],
+    foodSafetyAck: true,
+    foodSafetyAckAt: '2026-09-13 21:00',
+    createdAt: '2026-09-13 20:30',
+    timeline: [
+      { at: '2026-09-13 20:30', actor: '李建国', action: '提交预约并缴纳押金 100 元' },
+      { at: '2026-09-13 21:00', actor: '张管理', action: '审批通过', tone: 'green' },
+      { at: '2026-09-14 20:10', actor: '张管理', action: '食材提前入库（冷冻虾仁 + 饺子皮）', tone: 'blue' },
+      { at: '2026-09-15 08:30', actor: '李建国', action: '因故取消活动', tone: 'gray' },
+      { at: '2026-09-15 09:00', actor: '张管理', action: '食材超时未取，电话/短信通知负责人', tone: 'amber' },
+      { at: '2026-09-15 10:00', actor: '张管理', action: '冷冻虾仁转为待处理食材，等待按食品安全规则处置', tone: 'red' }
     ]
   }
 ]

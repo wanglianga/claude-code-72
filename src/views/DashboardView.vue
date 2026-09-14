@@ -3,13 +3,43 @@ import { computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useKitchenStore } from '@/stores/kitchen'
 import { useRouter } from '@/router'
-import { ACTIVITY_RULES, ROLE_META, STATUS_META } from '@/rules'
+import { ACTIVITY_RULES, ROLE_META, STATUS_META, STORAGE_CATEGORY_META } from '@/rules'
+import type { StorageState } from '@/types'
 
 const auth = useAuthStore()
 const kitchen = useKitchenStore()
 const { push } = useRouter()
 const user = computed(() => auth.currentUser!)
 const role = computed(() => user.value.role)
+
+// 管理员/社区工作人员可见的超时在库食材
+const overdueStorage = computed(() =>
+  role.value === 'admin' || role.value === 'staff' ? kitchen.overdueStorageItems : []
+)
+function catLabel(k: string) {
+  return STORAGE_CATEGORY_META[k]?.label ?? k
+}
+const STATE_LABEL: Record<StorageState, string> = {
+  stored: '在库',
+  notified: '已通知',
+  pending: '待处理',
+  taken: '已取走',
+  disposed: '已报废',
+  cleared: '已清空'
+}
+function stateLabel(s: StorageState) {
+  return STATE_LABEL[s]
+}
+
+// 居民本人的在库暂存食材
+const myStorage = computed(() =>
+  role.value === 'resident'
+    ? kitchen.activeStorageItems.filter((x) => x.booking.applicantId === user.value.id)
+    : []
+)
+const myOverdueCount = computed(
+  () => myStorage.value.filter((x) => x.overdueHours >= 2 || x.item.state === 'pending').length
+)
 
 const myBookings = computed(() =>
   kitchen.bookings.filter((b) => b.applicantId === user.value.id).slice(0, 5)
@@ -110,6 +140,43 @@ const greetings: Record<string, string> = {
       </table>
     </div>
 
+    <!-- 超时食材提醒（管理员） -->
+    <div v-if="overdueStorage.length" class="card overdue-card">
+      <div class="card-title">
+        <h2>⏰ 食材暂存超时提醒</h2>
+        <span class="tag red">{{ overdueStorage.length }} 项待处置</span>
+      </div>
+      <div class="small muted" style="margin-bottom: 10px">
+        已超过预计取走时间 2 小时未取走。请通知负责人；肉类/海鲜必须按食品安全规则报废或取回，处置费计入押金，公益课堂可豁免。
+      </div>
+      <table class="data">
+        <thead>
+          <tr><th>食材</th><th>类别</th><th>负责人</th><th>格位</th><th>预计取走</th><th>超时时长</th><th>状态</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="x in overdueStorage"
+            :key="x.item.id"
+            class="clickable"
+            @click="push(`/booking/${x.booking.id}`)"
+          >
+            <td><strong>{{ x.item.name }}</strong><div class="tiny muted">{{ x.booking.title }}</div></td>
+            <td>
+              <span class="tag" :class="x.item.category === 'meat-seafood' ? 'red' : ''">
+                {{ catLabel(x.item.category) }}
+              </span>
+            </td>
+            <td class="small">{{ x.item.ownerName }}<br />{{ x.item.ownerPhone }}</td>
+            <td class="small">{{ x.item.zone }}</td>
+            <td class="small">{{ x.item.expectedTakeAt }}</td>
+            <td><span class="tag red">{{ x.overdueHours.toFixed(1) }} 小时</span></td>
+            <td><span class="tag amber">{{ stateLabel(x.item.state) }}</span></td>
+            <td><a>去处置 →</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <div v-if="myIncidents.length || myDisputes.length" class="card">
       <div class="card-title"><h2>🧰 我的协作任务</h2></div>
       <table class="data">
@@ -140,6 +207,35 @@ const greetings: Record<string, string> = {
             <td class="muted">{{ kitchen.bookingById(d.bookingId)?.title }}</td>
             <td>{{ d.status === 'open' ? '待调解' : '调解中' }}</td>
             <td><a>去调解 →</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 居民：我的暂存食材提醒 -->
+    <div v-if="role === 'resident' && myStorage.length" class="card overdue-card">
+      <div class="card-title">
+        <h2>🧊 我的暂存食材</h2>
+        <span class="tag" :class="myOverdueCount ? 'red' : 'green'">{{ myOverdueCount ? myOverdueCount + ' 项超时' : '在库中' }}</span>
+      </div>
+      <table class="data">
+        <thead><tr><th>食材</th><th>格位</th><th>关联预约</th><th>预计取走</th><th>状态</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="x in myStorage" :key="x.item.id" class="clickable" @click="push(`/booking/${x.booking.id}`)">
+            <td>
+              <strong>{{ x.item.name }}</strong>
+              <span v-if="x.item.category === 'meat-seafood'" class="tag red" style="margin-left: 6px">肉类/海鲜</span>
+            </td>
+            <td class="small">{{ x.item.zone }}</td>
+            <td class="small muted">{{ x.booking.title }}</td>
+            <td class="small">{{ x.item.expectedTakeAt }}</td>
+            <td>
+              <span v-if="x.overdueHours >= 2" class="tag red">超时 {{ x.overdueHours.toFixed(1) }} 小时，请尽快取走</span>
+              <span v-else-if="x.item.state === 'pending'" class="tag red">待处理</span>
+              <span v-else-if="x.item.state === 'notified'" class="tag amber">已收到通知</span>
+              <span v-else class="tag green">在库</span>
+            </td>
+            <td><a>查看 →</a></td>
           </tr>
         </tbody>
       </table>
@@ -195,6 +291,7 @@ const greetings: Record<string, string> = {
 </template>
 
 <style scoped>
+.overdue-card { border-left: 4px solid var(--c-red); }
 .rule-box {
   border: 1px solid var(--c-border); border-radius: 8px; padding: 12px;
   background: var(--c-surface-2); display: flex; flex-direction: column; gap: 7px;

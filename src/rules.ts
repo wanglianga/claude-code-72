@@ -123,3 +123,44 @@ export const FOOD_SAFETY_NOTICE = {
     '七、违反告知造成食品安全事故的，由预约人（负责人）依法承担责任，押金不足以弥补损失的继续追偿。'
   ]
 }
+
+// ---------------- 食材暂存 ----------------
+export const STORAGE_CATEGORY_META: Record<
+  string,
+  { label: string; icon: string; meatSeafood: boolean; temp: string }
+> = {
+  'meat-seafood': { label: '肉类 / 海鲜', icon: '🥩', meatSeafood: true, temp: '0–4℃ 冷藏或 -18℃ 冷冻，生熟分层' },
+  'dairy-egg': { label: '蛋奶 / 奶油', icon: '🥛', meatSeafood: false, temp: '2–6℃ 冷藏密封' },
+  vegetable: { label: '蔬菜 / 水果', icon: '🥬', meatSeafood: false, temp: '冷藏或常温暂存架' },
+  staple: { label: '米面 / 干货', icon: '🌾', meatSeafood: false, temp: '常温暂存架，离地离墙' },
+  prepared: { label: '半成品 / 成品', icon: '🍱', meatSeafood: false, temp: '冷藏 ≤24h，留样按告知书执行' },
+  other: { label: '其他', icon: '🧺', meatSeafood: false, temp: '按食材要求存放' }
+}
+
+// 暂存处置收费标准（元）；公益活动（charity-class）经核准可豁免
+export const STORAGE_FEES = {
+  pendingPerDay: 10, // 待处理食材占位费：10 元/天
+  clearFee: 20, // 非风险食材管理员清空格位 20 元/次
+  meatSeafoodDiscard: 60, // 肉类/海鲜超时强制报废处置（含危废登记）60 元/次
+  otherDiscard: 30 // 普通食材报废 30 元/次
+} as const
+
+export const STORAGE_OVERTIME_HOURS = 2 // 超过预计取走时间 2 小时即判定超时
+
+// 肉类 / 海鲜超时处置的食品安全规则
+export const MEAT_SEAFOOD_RULE = {
+  title: '肉类 / 海鲜超时食材食品安全处置规则',
+  options: [
+    {
+      key: 'discard',
+      label: '依规报废',
+      desc: '超出预计取走时间且无法确认冷链连续性的肉类/海鲜，禁止再用于公共餐食，按餐厨危废流程报废登记、拍照留证，处置费 60 元由预约人承担（公益活动可申请豁免）。'
+    },
+    {
+      key: 'retrieve',
+      label: '联系负责人取回',
+      desc: '管理员通过电话/短信通知负责人，其在 2 小时内到场、确认包装与温度完好并签收后可取回；不得继续存放，取回不收费。'
+    }
+  ] as const,
+  forbidClear: true // 肉类海鲜不允许简单「清空格位」，必须报废或取回
+}

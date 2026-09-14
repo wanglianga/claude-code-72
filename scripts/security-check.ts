@@ -139,7 +139,21 @@ assert('状态仍为「待验收」，押金决定未生成', kitchen.bookingByI
 console.log('\n[C] 七项完整确认 + 总评 → 正常生成验收与押金决定')
 const photo: Photo = { id: 'p-test', emoji: '🧴', label: '验收现场', takenAt: '2026-09-13 14:00', by: '张管理' }
 
+// 验收前置：b-006 有超时未取的炸肉丸（st-4），负责人取回（免费）后才允许验收
+function resolveB006Storage() {
+  const t = kitchen.bookingById('b-006')!
+  const mb = t.storageItems.find((i) => i.name.includes('炸肉丸'))
+  if (mb && ['stored', 'notified', 'pending'].includes(mb.state)) {
+    kitchen.disposeStorage(
+      t, mb.id,
+      { action: 'retrieve', reason: '负责人到场签收，确认包装温度完好后取回', photos: [], feeWaived: false, liabilityAck: false },
+      '张管理', 'admin'
+    )
+  }
+}
+
 // C1. 七项全合格 + 总评 → 完成，押金 200 全额退
+resolveB006Storage()
 r = kitchen.submitAcceptance(target, '张管理', 'admin', {
   items: emptyAcceptanceItems().map((i) => ({ ...i, result: 'pass' as const })),
   overtimeMinutes: 0,
@@ -160,6 +174,7 @@ items2[0].note = '灶台有油污需要补清洁'
 items2[4].result = 'fail'
 items2[4].note = '地面有顽固污渍'
 items2[4].photos.push(photo)
+resolveB006Storage()
 r = kitchen.submitAcceptance(target2, '张管理', 'admin', {
   items: items2,
   overtimeMinutes: 40,
@@ -172,6 +187,163 @@ assert('验收记录含 1 不合格 + 1 补清洁', (() => {
   const its = kitchen.bookingById('b-006')!.acceptance!.items
   return its.filter((i) => i.result === 'fail').length === 1 && its.filter((i) => i.result === 'redirty').length === 1
 })())
+
+// ================= D. 食材暂存超时处置 =================
+console.log('\n[D] 食材暂存超时：通知 / 待处理 / 报废 / 取回 / 清空 与押金联动')
+
+kitchen.resetDemo()
+const b008 = kitchen.bookingById('b-008')! // 已取消，虾仁(肉类 pending) + 饺子皮(stored)
+const shrimp = b008.storageItems.find((i) => i.name.includes('虾仁'))!
+const wrapper = b008.storageItems.find((i) => i.name.includes('饺子皮'))!
+const photoD: Photo = { id: 'p-d1', emoji: '🥩', label: '危废报废登记照', takenAt: '2026-09-15 12:00', by: '张管理' }
+
+// D0. 隔离：王秀兰（第三方居民）不能访问李建国的取消预约
+assert('居民王秀兰 访问 李建国取消的 b-008 → 拒绝', canViewBooking(b008, 'resident', U.wang, kitchen.incidents) === false)
+
+// D1. 非管理员不能处置
+let rd = kitchen.disposeStorage(
+  b008, shrimp.id,
+  { action: 'discard', reason: '超时', photos: [photoD], feeWaived: false, liabilityAck: true },
+  '王秀兰', 'resident'
+)
+assert('非管理员报废食材 → 拒绝', rd.ok === false && /管理员/.test(rd.msg ?? ''))
+
+// D2. 肉类/海鲜不允许简单清空
+rd = kitchen.disposeStorage(
+  b008, shrimp.id,
+  { action: 'clear', reason: '随便扔掉', photos: [], feeWaived: false, liabilityAck: false },
+  '张管理', 'admin'
+)
+assert('肉类/海鲜清空格位 → 拒绝（必须报废或取回）', rd.ok === false && /肉类\/海鲜/.test(rd.msg ?? ''))
+
+// D3. 报废必须责任确认 + 拍照
+rd = kitchen.disposeStorage(
+  b008, shrimp.id,
+  { action: 'discard', reason: '超时无法确认冷链', photos: [], feeWaived: false, liabilityAck: false },
+  '张管理', 'admin'
+)
+assert('报废缺责任提示 → 拒绝', rd.ok === false && /责任/.test(rd.msg ?? ''))
+rd = kitchen.disposeStorage(
+  b008, shrimp.id,
+  { action: 'discard', reason: '超时无法确认冷链', photos: [], feeWaived: false, liabilityAck: true },
+  '张管理', 'admin'
+)
+assert('报废缺现场照片 → 拒绝', rd.ok === false && /拍照|照片/.test(rd.msg ?? ''))
+
+// D4. 合规报废肉类/海鲜 → 处置费 60，即时计入押金
+rd = kitchen.disposeStorage(
+  b008, shrimp.id,
+  { action: 'discard', reason: '超时 2 小时以上且负责人出差无法取回，冷链连续性不可确认', photos: [photoD], feeWaived: false, liabilityAck: true },
+  '张管理', 'admin'
+)
+assert('合规报废虾仁成功', rd.ok === true && rd.fee === 60, JSON.stringify(rd))
+assert('虾仁状态=已报废', kitchen.bookingById('b-008')!.storageItems.find((i) => i.id === shrimp.id)!.state === 'disposed')
+assert('处置费 60 已计入押金（活动取消也即时落账）', (kitchen.bookingById('b-008')!.depositResult?.deduction ?? 0) === 60)
+
+// D5. 非肉类（饺子皮）清空 → 20 元，押金累计 80
+rd = kitchen.disposeStorage(
+  b008, wrapper.id,
+  { action: 'discard', reason: '饺子皮粘连变质', photos: [photoD], feeWaived: false, liabilityAck: true },
+  '张管理', 'admin'
+)
+// 普通食材报废 30
+assert('普通食材依规报废成功，费 30', rd.ok === true && rd.fee === 30)
+assert('押金累计扣费 90（60+30）', (kitchen.bookingById('b-008')!.depositResult?.deduction ?? -1) === 90)
+
+// D6. 公益活动豁免
+const b007 = kitchen.bookingById('b-007')!
+const putR = kitchen.putStorage(
+  b007,
+  { name: '测试豆腐 1kg', zone: '冷藏柜A-4层', category: 'other', ownerName: '陈小明', ownerPhone: '138-0000-2001', expectedTakeAt: '2099-01-01 10:00' },
+  '张管理'
+)
+assert('公益活动食材可入库', putR.ok === true)
+const tofu = b007.storageItems.find((i) => i.name.includes('测试豆腐'))!
+rd = kitchen.disposeStorage(
+  b007, tofu.id,
+  { action: 'discard', reason: '测试公益豁免', photos: [photoD], feeWaived: true, liabilityAck: true },
+  '张管理', 'admin'
+)
+assert('公益活动报废可豁免处置费（0 元但记录责任）', rd.ok === true && rd.fee === 0)
+assert('公益免押活动未生成押金扣费', !b007.depositResult || (b007.depositResult.deduction ?? 0) === 0)
+
+// D7. 非公益活动申请豁免 → 拒绝
+const b006x = kitchen.bookingById('b-006')!
+const putR2 = kitchen.putStorage(
+  b006x,
+  { name: '测试青菜 1kg', zone: '常温暂存架-3号位', category: 'vegetable', ownerName: '王秀兰', ownerPhone: '138-0000-1001', expectedTakeAt: '2099-01-01 10:00' },
+  '张管理'
+)
+assert('邻里宴食材可入库', putR2.ok === true)
+const veg = b006x.storageItems.find((i) => i.name.includes('测试青菜'))!
+rd = kitchen.disposeStorage(
+  b006x, veg.id,
+  { action: 'discard', reason: '测试', photos: [photoD], feeWaived: true, liabilityAck: true },
+  '张管理', 'admin'
+)
+assert('邻里宴申请公益豁免 → 拒绝', rd.ok === false && /豁免/.test(rd.msg ?? ''))
+// 拒绝后状态不变
+assert('豁免被拒后食材仍在库，未被扣费', b006x.storageItems.find((i) => i.id === veg.id)!.state === 'stored')
+// 正常报废 30
+kitchen.disposeStorage(
+  b006x, veg.id,
+  { action: 'discard', reason: '测试', photos: [photoD], feeWaived: false, liabilityAck: true },
+  '张管理', 'admin'
+)
+
+// D8. 入库校验：缺负责人电话 / 预计取走时间早于现在
+const bad1 = kitchen.putStorage(b006x, { name: 'x', zone: 'z', category: 'other', ownerName: '王', ownerPhone: '', expectedTakeAt: '2099-01-01 10:00' }, '张管理')
+assert('入库缺负责人电话 → 拒绝', bad1.ok === false && /电话/.test(bad1.msg ?? ''))
+const bad2 = kitchen.putStorage(b006x, { name: 'x', zone: 'z', category: 'other', ownerName: '王', ownerPhone: '138', expectedTakeAt: '2000-01-01 10:00' }, '张管理')
+assert('预计取走时间早于现在 → 拒绝', bad2.ok === false)
+
+// D9. 通知与待处理状态流转
+const putR3 = kitchen.putStorage(
+  b006x,
+  { name: '测试排骨 1kg', zone: '冷藏柜A-3层', category: 'meat-seafood', ownerName: '王秀兰', ownerPhone: '138-0000-1001', expectedTakeAt: '2099-01-01 10:00' },
+  '张管理'
+)
+const rib = b006x.storageItems.find((i) => i.name.includes('测试排骨'))!
+const nr = kitchen.notifyStorage(b006x, rib.id, { channel: '电话', note: '约定明早取' }, '张管理')
+assert('通知负责人成功', nr.ok === true && b006x.storageItems.find((i) => i.id === rib.id)!.state === 'notified')
+kitchen.markStoragePending(b006x, rib.id, '负责人暂不能取', '张管理')
+assert('转待处理成功', b006x.storageItems.find((i) => i.id === rib.id)!.state === 'pending')
+// 负责人取回（免费）
+rd = kitchen.disposeStorage(
+  b006x, rib.id,
+  { action: 'retrieve', reason: '到场确认温度完好，签收取回', photos: [], feeWaived: false, liabilityAck: false },
+  '张管理', 'admin'
+)
+assert('负责人取回成功且免费', rd.ok === true && rd.fee === 0)
+assert('取回后状态=已取走(taken)', b006x.storageItems.find((i) => i.id === rib.id)!.state === 'taken')
+
+// D10. 验收前拦截：b-006 初始有处于 notified 的炸肉丸(st-4)，七项全合格也不允许验收
+kitchen.resetDemo()
+const targetD = kitchen.bookingById('b-006')!
+assert('验收前存在未处置食材（炸肉丸）', kitchen.hasUnresolvedStorage('b-006') === true)
+let rd2: { ok: boolean; msg?: string; deduction?: number } = kitchen.submitAcceptance(targetD, '张管理', 'admin', {
+  items: emptyAcceptanceItems().map((i) => ({ ...i, result: 'pass' as const })),
+  overtimeMinutes: 0,
+  cleaningExtraMinutes: 0,
+  overallComment: '合格'
+})
+assert('有未处置食材时验收 → 拒绝', rd2.ok === false && /食材/.test(rd2.msg ?? ''))
+assert('拒绝验收后状态仍为 closing', kitchen.bookingById('b-006')!.status === 'closing')
+// 处置炸肉丸（肉类，60 元）
+const meatball = targetD.storageItems.find((i) => i.name.includes('炸肉丸'))!
+kitchen.disposeStorage(
+  targetD, meatball.id,
+  { action: 'discard', reason: '隔夜肉类不可继续存放于公共冰箱', photos: [photoD], feeWaived: false, liabilityAck: true },
+  '张管理', 'admin'
+)
+assert('处置后无未结食材', kitchen.hasUnresolvedStorage('b-006') === false)
+rd2 = kitchen.submitAcceptance(targetD, '张管理', 'admin', {
+  items: emptyAcceptanceItems().map((i) => ({ ...i, result: 'pass' as const })),
+  overtimeMinutes: 0,
+  cleaningExtraMinutes: 0,
+  overallComment: '处置完成后验收合格'
+})
+assert('食材处置完毕后验收成功，处置费 60 计入押金', rd2.ok === true && (rd2.deduction ?? 0) === 60, `deduction=${rd2.deduction}`)
 
 console.log(`\n========== 结果：${pass} 通过，${fail} 失败 ==========`)
 if (fail > 0) process.exit(1)

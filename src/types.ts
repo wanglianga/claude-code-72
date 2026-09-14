@@ -48,12 +48,53 @@ export interface KitchenResource {
   note?: string
 }
 
+// 食材暂存类别（肉类/海鲜有强制食品安全处置要求）
+export type StorageCategory = 'meat-seafood' | 'dairy-egg' | 'vegetable' | 'staple' | 'prepared' | 'other'
+// stored 在库 / taken 已取走 / notified 已通知负责人 / pending 待处理食材 / disposed 已报废 / cleared 已清空格位
+export type StorageState = 'stored' | 'taken' | 'notified' | 'pending' | 'disposed' | 'cleared'
+// discard 报废 / retrieve 负责人取回 / clear 清空格位（非肉类海鲜）
+export type StorageDisposalAction = 'discard' | 'retrieve' | 'clear'
+
+export interface StorageNotification {
+  at: string
+  by: string
+  channel: string // 电话/短信/现场告知
+  note?: string
+}
+
+export interface StorageDisposal {
+  action: StorageDisposalAction
+  at: string
+  by: string
+  reason: string
+  photos: Photo[]
+  fee: number // 本次处置费/占用费（0 表示豁免）
+  feeWaived: boolean // 是否公益豁免
+  liabilityAck: boolean // 是否已提示预约人承担责任
+  note?: string
+  postedToDeposit?: boolean // 处置费是否已即时计入押金（取消活动等无验收场景）
+}
+
 export interface StorageItem {
   id: string
   name: string
   zone: string // 冷藏/冷冻/常温暂存架 + 格位
+  category: StorageCategory
+  label: string // 入库标签内容（食材名+负责人+日期/电话）
   putAt: string
+  putBy: string // 入库经办人
+  ownerName: string // 负责人
+  ownerPhone: string
+  expectedTakeAt: string // 预计取走时间（超时判定基准）
   takeAt?: string
+  state: StorageState
+  notifications: StorageNotification[]
+  disposal?: StorageDisposal
+  history: { at: string; by: string; action: string }[]
+}
+
+export function isMeatSeafood(item: { category: StorageCategory }): boolean {
+  return item.category === 'meat-seafood'
 }
 
 // ============ 预约状态机 ============

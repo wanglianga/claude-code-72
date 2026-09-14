@@ -11,11 +11,19 @@ import type {
   Photo,
   Publicity,
   ResourceType,
+  StorageCategory,
+  StorageDisposal,
+  StorageDisposalAction,
   StorageItem
 } from '@/types'
 import { seedBookings, seedIncidents, seedResources } from '@/seed'
-import { ACTIVITY_RULES } from '@/rules'
-import { nowStr, uid } from '@/utils/format'
+import {
+  ACTIVITY_RULES,
+  MEAT_SEAFOOD_RULE,
+  STORAGE_FEES,
+  STORAGE_OVERTIME_HOURS
+} from '@/rules'
+import { hoursSince, nowStr, parseDateTime, uid } from '@/utils/format'
 import { validateAcceptance, type AcceptFormItem } from '@/utils/access'
 
 // 各类活动的计费费率（元/分钟）
@@ -93,6 +101,49 @@ export const useKitchenStore = defineStore('kitchen', {
     repairingResources(state): KitchenResource[] {
       return state.resources.filter((r) => r.status === 'repairing')
     },
+
+    // ---------- 食材暂存超时 ----------
+    /** 所有在库中的暂存食材（未取走/未终结处置） */
+    activeStorageItems(state): { item: StorageItem; booking: Booking; overdueHours: number }[] {
+      const out: { item: StorageItem; booking: Booking; overdueHours: number }[] = []
+      for (const bk of state.bookings) {
+        for (const item of bk.storageItems) {
+          if (['stored', 'notified', 'pending'].includes(item.state)) {
+            out.push({ item, booking: bk, overdueHours: hoursSince(item.expectedTakeAt) })
+          }
+        }
+      }
+      return out.sort((a, b) => b.overdueHours - a.overdueHours)
+    },
+    /** 已超时（预计取走时间后超过阈值）或已转待处理的在库食材 */
+    overdueStorageItems(): { item: StorageItem; booking: Booking; overdueHours: number }[] {
+      return this.activeStorageItems.filter(
+        (x: { item: StorageItem; overdueHours: number }) =>
+          x.item.state === 'pending' || x.overdueHours >= STORAGE_OVERTIME_HOURS
+      )
+    },
+    /** 某预约的暂存处置费合计（含豁免记录） */
+    storageFeeOf(state) {
+      return (bookingId: string) => {
+        const bk = state.bookings.find((b) => b.id === bookingId)
+        let fee = 0
+        let waived = 0
+        for (const it of bk?.storageItems ?? []) {
+          if (it.disposal) {
+            fee += it.disposal.fee
+            if (it.disposal.feeWaived) waived += it.disposal.fee
+          }
+        }
+        return { fee, waived }
+      }
+    },
+    /** 某预约是否还有未终结处置的在库食材（验收前必须为空） */
+    hasUnresolvedStorage(state) {
+      return (bookingId: string) => {
+        const bk = state.bookings.find((b) => b.id === bookingId)
+        return (bk?.storageItems ?? []).some((i) => ['stored', 'notified', 'pending'].includes(i.state))
+      }
+    },
     // 当前用户的待办数量
     todoCount() {
       return (role: string, userId: string) => {
@@ -108,6 +159,8 @@ export const useKitchenStore = defineStore('kitchen', {
         for (const d of this.disputes as DepositDispute[]) {
           if (['open', 'mediating'].includes(d.status) && role === 'staff') n++
         }
+        // 超时食材待处置（管理员）
+        if (role === 'admin') n += this.overdueStorageItems.length
         // 申请人自己的预约待补款/待签收
         for (const b of this.bookings as Booking[]) {
           if (
@@ -399,20 +452,217 @@ export const useKitchenStore = defineStore('kitchen', {
       return { ok: true }
     },
 
-    // 食材暂存
-    putStorage(b: Booking, name: string, zone: string, actor: string) {
-      const item: StorageItem = { id: uid('st'), name, zone, putAt: nowStr() }
+    // 食材暂存：入库必须记录格位、时间、标签、负责人
+    putStorage(
+      b: Booking,
+      data: {
+        name: string
+        zone: string
+        category: StorageCategory
+        label?: string
+        ownerName: string
+        ownerPhone: string
+        expectedTakeAt: string
+      },
+      actor: string
+    ): { ok: boolean; msg?: string } {
+      if (!data.name.trim() || !data.zone.trim()) return { ok: false, msg: '请填写食材名称与存放格位' }
+      if (!data.ownerName.trim() || !data.ownerPhone.trim())
+        return { ok: false, msg: '负责人姓名与电话必填（超时通知需要）' }
+      if (!data.expectedTakeAt) return { ok: false, msg: '请填写预计取走时间' }
+      const expectedAt =
+        data.expectedTakeAt.length === 5 ? `${b.date} ${data.expectedTakeAt}` : data.expectedTakeAt
+      if (parseDateTime(expectedAt) <= Date.now())
+        return { ok: false, msg: '预计取走时间必须晚于当前时间' }
+      const item: StorageItem = {
+        id: uid('st'),
+        name: data.name.trim(),
+        zone: data.zone.trim(),
+        category: data.category,
+        label: data.label?.trim() || `${data.name.trim()} / ${data.ownerName.trim()} ${data.ownerPhone.trim()} / ${expectedAt.slice(5, 10)}`,
+        putAt: nowStr(),
+        putBy: actor,
+        ownerName: data.ownerName.trim(),
+        ownerPhone: data.ownerPhone.trim(),
+        expectedTakeAt: expectedAt,
+        state: 'stored',
+        notifications: [],
+        history: [{ at: nowStr(), by: actor, action: `入库${data.zone.trim()}，粘贴标签` }]
+      }
       b.storageItems.push(item)
-      this.tl(b, `食材入库暂存：${name} → ${zone}`, actor, 'blue')
+      this.tl(b, `食材入库暂存：${item.name} → ${item.zone}（负责人 ${item.ownerName}）`, actor, 'blue')
       this.persist()
+      return { ok: true }
     },
+
+    /** 负责人正常取走 */
     takeStorage(b: Booking, itemId: string, actor: string) {
       const it = b.storageItems.find((x) => x.id === itemId)
-      if (it) {
-        it.takeAt = nowStr()
-        this.tl(b, `食材取走：${it.name}`, actor, 'gray')
-        this.persist()
+      if (!it || !['stored', 'notified', 'pending'].includes(it.state)) return
+      it.state = 'taken'
+      it.takeAt = nowStr()
+      it.history.push({ at: nowStr(), by: actor, action: '负责人取走' })
+      this.tl(b, `食材取走：${it.name}`, actor, 'gray')
+      this.persist()
+    },
+
+    /** 通知负责人（可多次，记录电话/短信/现场告知） */
+    notifyStorage(
+      b: Booking,
+      itemId: string,
+      data: { channel: string; note?: string },
+      actor: string
+    ): { ok: boolean; msg?: string } {
+      const it = b.storageItems.find((x) => x.id === itemId)
+      if (!it || !['stored', 'pending'].includes(it.state)) return { ok: false, msg: '当前状态无需通知' }
+      it.notifications.push({ at: nowStr(), by: actor, channel: data.channel, note: data.note })
+      it.state = 'notified'
+      it.history.push({ at: nowStr(), by: actor, action: `通过${data.channel}通知负责人${data.note ? '：' + data.note : ''}` })
+      this.tl(b, `超时食材通知：${it.name}（负责人 ${it.ownerName} ${it.ownerPhone}，${data.channel}）`, actor, 'amber')
+      this.persist()
+      return { ok: true }
+    },
+
+    /** 转为待处理食材（继续占位，按天计占位费，等待负责人取回或报废决定） */
+    markStoragePending(b: Booking, itemId: string, note: string, actor: string) {
+      const it = b.storageItems.find((x) => x.id === itemId)
+      if (!it || it.state === 'taken' || it.state === 'disposed' || it.state === 'cleared') return
+      it.state = 'pending'
+      it.history.push({ at: nowStr(), by: actor, action: `转为待处理食材${note ? '：' + note : ''}` })
+      this.tl(b, `「${it.name}」转为待处理食材，等待负责人取回或依规处置`, actor, 'red')
+      this.persist()
+    },
+
+    /**
+     * 终结处置：报废 / 取回 / 清空
+     * - 肉类海鲜只允许 discard 或 retrieve（禁止 clear）
+     * - discard 必须确认责任提示 + 拍照；肉类海鲜 60，普通 30
+     * - clear 仅非肉类海鲜，20 元清空格位
+     * - 公益活动可豁免处置费（记录在案）
+     */
+    disposeStorage(
+      b: Booking,
+      itemId: string,
+      data: {
+        action: StorageDisposalAction
+        reason: string
+        photos: Photo[]
+        feeWaived: boolean
+        liabilityAck: boolean
+        note?: string
+      },
+      actor: string,
+      actorRole: string
+    ): { ok: boolean; msg?: string; fee?: number } {
+      if (actorRole !== 'admin' && actorRole !== 'staff')
+        return { ok: false, msg: '仅厨房管理员 / 社区工作人员可以处置暂存食材' }
+      const it = b.storageItems.find((x) => x.id === itemId)
+      if (!it) return { ok: false, msg: '暂存记录不存在' }
+      if (['taken', 'disposed', 'cleared'].includes(it.state)) return { ok: false, msg: '该食材已终结处置' }
+      const meatSeafood = it.category === 'meat-seafood'
+      if (meatSeafood && data.action === 'clear') {
+        return { ok: false, msg: MEAT_SEAFOOD_RULE.title + '：肉类/海鲜不得简单清空，必须「依规报废」或「联系负责人取回」' }
       }
+      if (data.action === 'discard') {
+        if (!data.liabilityAck)
+          return { ok: false, msg: '报废前必须确认已向预约人提示责任承担' }
+        if (data.photos.length === 0) return { ok: false, msg: '报废必须拍照留证（危废登记）' }
+      }
+      if (!data.reason.trim()) return { ok: false, msg: '请填写处置原因' }
+
+      // 费用计算
+      let fee = 0
+      if (data.action === 'discard') fee = meatSeafood ? STORAGE_FEES.meatSeafoodDiscard : STORAGE_FEES.otherDiscard
+      if (data.action === 'clear') fee = STORAGE_FEES.clearFee
+      if (data.action === 'retrieve') fee = 0
+      const canWaive = b.activityKind === 'charity-class'
+      const feeWaived = data.feeWaived && canWaive && fee > 0
+      if (data.feeWaived && !canWaive)
+        return { ok: false, msg: '仅公益课堂活动可申请处置费豁免' }
+      const charged = feeWaived ? 0 : fee
+
+      const disposal: StorageDisposal = {
+        action: data.action,
+        at: nowStr(),
+        by: actor,
+        reason: data.reason.trim(),
+        photos: data.photos,
+        fee: charged,
+        feeWaived,
+        liabilityAck: data.liabilityAck,
+        note: data.note
+      }
+      it.disposal = disposal
+      if (data.action === 'retrieve') {
+        it.state = 'taken'
+        it.takeAt = nowStr()
+      } else if (data.action === 'discard') {
+        it.state = 'disposed'
+      } else {
+        it.state = 'cleared'
+      }
+      it.history.push({
+        at: nowStr(),
+        by: actor,
+        action:
+          data.action === 'discard'
+            ? `依规报废（${meatSeafood ? '肉类/海鲜食品安全流程' : '普通食材'}，${feeWaived ? '公益豁免处置费' : '处置费 ' + charged + ' 元'}）`
+            : data.action === 'retrieve'
+              ? '负责人到场确认包装温度完好，签收取回'
+              : `清空格位（${charged} 元）`
+      })
+
+      // 时间线与押金影响
+      if (data.action === 'discard') {
+        this.tl(
+          b,
+          `食材「${it.name}」依规报废，${feeWaived ? '公益活动豁免处置费' : `处置费 ${charged} 元由负责人承担`}`,
+          actor,
+          feeWaived ? 'blue' : 'red'
+        )
+      } else if (data.action === 'retrieve') {
+        this.tl(b, `超时食材「${it.name}」由负责人 ${it.ownerName} 取回，无费用`, actor, 'green')
+      } else {
+        this.tl(b, `管理员清空「${it.name}」格位，清空格位费 ${charged} 元`, actor, 'amber')
+      }
+      // 押金影响：
+      // - 已完成：追加到验收押金决定
+      // - 未完成（含活动取消后滞留）：即时登记一笔押金扣费，验收时合并试算
+      if (charged > 0 && !b.depositFree) {
+        const reasonText = `食材「${it.name}」${data.action === 'discard' ? '超时报废' : '清空格位'}费 ${charged} 元`
+        if (b.depositResult && b.status === 'completed') {
+          b.depositResult.deduction = Math.min(b.depositRequired, b.depositResult.deduction + charged)
+          b.depositResult.reasons.push('验收后追加：' + reasonText)
+          disposal.postedToDeposit = true
+        } else {
+          // 即时落账（活动取消/验收前），验收押金试算不再重复计入
+          if (!b.depositResult) {
+            b.depositResult = {
+              decision: 'partial',
+              deduction: 0,
+              reasons: [],
+              decidedBy: actor,
+              decidedAt: nowStr()
+            }
+          }
+          b.depositResult.deduction = Math.min(b.depositRequired, b.depositResult.deduction + charged)
+          if (!b.depositResult.reasons.includes(reasonText)) b.depositResult.reasons.push(reasonText)
+          disposal.postedToDeposit = true
+        }
+      } else if (charged === 0) {
+        disposal.postedToDeposit = true
+      }
+      this.persist()
+      return { ok: true, fee: charged }
+    },
+
+    /** 待处理食材占位费（按天，不足一天按一天） */
+    pendingDays(it: StorageItem): number {
+      if (it.state !== 'pending') return 0
+      const start = it.notifications.length
+        ? parseDateTime(it.notifications[it.notifications.length - 1].at)
+        : parseDateTime(it.expectedTakeAt)
+      return Math.max(1, Math.ceil((Date.now() - start) / 86400000))
     },
 
     // ================= 使用中事件（多角色协作） =================
@@ -558,6 +808,26 @@ export const useKitchenStore = defineStore('kitchen', {
       const reasons: string[] = []
       let deduction = 0
 
+      // 食材暂存处置费 / 待处理占位费（公益活动经豁免的部分不计）
+      for (const it of b.storageItems) {
+        if (it.disposal && it.disposal.fee > 0) {
+          reasons.push(
+            `食材「${it.name}」${it.disposal.action === 'discard' ? '超时报废' : '清空格位'}费 ${it.disposal.fee} 元`
+          )
+          deduction += it.disposal.fee
+        }
+        if (it.state === 'pending') {
+          const days = this.pendingDays(it)
+          const fee = days * STORAGE_FEES.pendingPerDay
+          if (b.activityKind === 'charity-class') {
+            reasons.push(`食材「${it.name}」待处理占位 ${days} 天（公益活动占位费免收）`)
+          } else {
+            reasons.push(`食材「${it.name}」待处理占位 ${days} 天 × ${STORAGE_FEES.pendingPerDay} 元 = ${fee} 元`)
+            deduction += fee
+          }
+        }
+      }
+
       const comp = this.incidents
         .filter((i) => i.bookingId === b.id && i.type === 'damage')
         .reduce((s, i) => s + (i.compensation ?? 0), 0)
@@ -618,6 +888,15 @@ export const useKitchenStore = defineStore('kitchen', {
         data.cleaningExtraMinutes
       )
       if (!v.ok) return { ok: false, msg: v.msg }
+
+      // 验收前所有在库食材必须已取走或完成处置
+      const unresolved = b.storageItems.filter((i) => ['stored', 'notified', 'pending'].includes(i.state))
+      if (unresolved.length) {
+        return {
+          ok: false,
+          msg: `还有 ${unresolved.length} 项暂存食材未取走/未处置（${unresolved.map((i) => i.name).join('、')}），请先通知负责人并完成报废/取回/清空后再验收`
+        }
+      }
 
       // 规范化为领域对象（此时 7 项均已显式确认）
       const items: AcceptanceItem[] = data.items.map((i) => ({

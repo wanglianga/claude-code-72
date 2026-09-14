@@ -8,13 +8,16 @@ import {
   CLEAN_REQUIREMENTS,
   INCIDENT_META,
   RESOURCE_META,
-  STATUS_META
+  STATUS_META,
+  STORAGE_CATEGORY_META,
+  STORAGE_OVERTIME_HOURS
 } from '@/rules'
 import type {
   IncidentOwner,
   IncidentType,
   Photo,
-  ResourceType
+  ResourceType,
+  StorageCategory
 } from '@/types'
 import BaseModal from '@/components/BaseModal.vue'
 import TimelineView from '@/components/TimelineView.vue'
@@ -22,7 +25,9 @@ import PhotoCapture from '@/components/PhotoCapture.vue'
 import PhotoList from '@/components/PhotoList.vue'
 import IncidentCard from '@/components/IncidentCard.vue'
 import AcceptanceForm from '@/components/AcceptanceForm.vue'
+import StorageItemCard from '@/components/StorageItemCard.vue'
 import { canViewBooking } from '@/utils/access'
+import { hoursSince } from '@/utils/format'
 
 const props = defineProps<{ id: string }>()
 const auth = useAuthStore()
@@ -66,7 +71,29 @@ const rf = reactive<{ type: IncidentType; title: string; detail: string; level: 
 const rfPhotos = ref<Photo[]>([])
 
 const showStorage = ref(false)
-const sf = reactive({ name: '', zone: '' })
+const sf = reactive({
+  name: '',
+  zone: '',
+  category: 'vegetable' as StorageCategory,
+  label: '',
+  ownerName: '',
+  ownerPhone: '',
+  expectedTakeAt: '20:00'
+})
+const sfErr = ref('')
+
+function openStorage() {
+  if (!b.value) return
+  sf.name = ''
+  sf.zone = ''
+  sf.category = 'vegetable'
+  sf.label = ''
+  sf.ownerName = b.value.contactName
+  sf.ownerPhone = b.value.contactPhone
+  sf.expectedTakeAt = b.value.endAt
+  sfErr.value = ''
+  showStorage.value = true
+}
 
 const showAccept = ref(false)
 const showDispute = ref(false)
@@ -181,10 +208,24 @@ function doReport() {
 
 // ---------- 食材 ----------
 function doPutStorage() {
-  if (!b.value || !sf.name.trim() || !sf.zone.trim()) return
-  kitchen.putStorage(b.value, sf.name.trim(), sf.zone.trim(), me.value.name)
-  sf.name = ''
-  sf.zone = ''
+  if (!b.value) return
+  const r = kitchen.putStorage(
+    b.value,
+    {
+      name: sf.name,
+      zone: sf.zone,
+      category: sf.category,
+      label: sf.label,
+      ownerName: sf.ownerName,
+      ownerPhone: sf.ownerPhone,
+      expectedTakeAt: sf.expectedTakeAt
+    },
+    me.value.name
+  )
+  if (!r.ok) {
+    sfErr.value = r.msg ?? '入库失败'
+    return
+  }
   showStorage.value = false
 }
 
@@ -391,27 +432,37 @@ function toggleRestrict() {
         </div>
 
         <!-- 食材暂存 -->
-        <div v-if="b.storageNeeded && ['checked', 'closing', 'completed'].includes(b.status)" class="card">
+        <div v-if="b.storageNeeded && ['approved', 'checked', 'closing', 'completed', 'canceled'].includes(b.status)" class="card">
           <div class="card-title">
-            <h2>🧊 食材暂存记录</h2>
-            <button v-if="b.status === 'checked' && (isAdmin || isApplicant)" class="btn sm" style="margin-left: auto" @click="showStorage = true">➕ 食材入库</button>
+            <h2>🧊 食材暂存与超时处置</h2>
+            <button
+              v-if="['approved', 'checked'].includes(b.status) && (isAdmin || isApplicant)"
+              class="btn sm"
+              style="margin-left: auto"
+              @click="openStorage"
+            >➕ 食材入库</button>
           </div>
-          <table class="data" v-if="b.storageItems.length">
-            <thead><tr><th>食材</th><th>格位</th><th>存入</th><th>取走</th></tr></thead>
-            <tbody>
-              <tr v-for="s in b.storageItems" :key="s.id">
-                <td>{{ s.name }}</td>
-                <td>{{ s.zone }}</td>
-                <td class="small">{{ s.putAt }}</td>
-                <td class="small">
-                  <span v-if="s.takeAt">{{ s.takeAt }}</span>
-                  <button v-else-if="b.status === 'checked' && (isAdmin || isApplicant)" class="btn sm" @click="kitchen.takeStorage(b, s.id, me.name)">登记取走</button>
-                  <span v-else-if="!s.takeAt && b.status !== 'checked'" class="tag red">遗留在库</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-else class="small muted">暂无暂存记录。</div>
+
+          <StorageItemCard
+            v-for="s in b.storageItems"
+            :key="s.id"
+            :item="s"
+            :booking="b"
+          />
+          <div v-if="!b.storageItems.length" class="small muted">暂无暂存记录。入库时必须登记格位、标签、负责人与预计取走时间。</div>
+
+          <!-- 超时汇总提示 -->
+          <div
+            v-if="b.storageItems.some((s) => ['stored', 'notified', 'pending'].includes(s.state) && hoursSince(s.expectedTakeAt) >= STORAGE_OVERTIME_HOURS)"
+            class="banner warn"
+            style="margin-top: 12px"
+          >
+            <span>⏰</span>
+            <div class="bx">
+              存在超时未取食材：管理员请先<b>通知负责人</b>，再转为待处理食材或完成处置；
+              肉类/海鲜必须按食品安全规则<b>报废或取回</b>。处置费将计入押金，公益课堂可豁免。验收前所有在库食材必须已取走或处置完毕。
+            </div>
+          </div>
         </div>
 
         <!-- 使用中事件：多角色围绕同一记录协作 -->
@@ -640,10 +691,28 @@ function toggleRestrict() {
       </template>
     </BaseModal>
 
-    <BaseModal v-if="showStorage" title="食材入库暂存" @close="showStorage = false">
+    <BaseModal v-if="showStorage" title="食材入库暂存（登记格位/标签/负责人）" wide @close="showStorage = false">
       <div class="modal-body">
-        <div class="field"><label>食材名称/数量<span class="req">*</span></label><input v-model="sf.name" placeholder="如：猪肉馅 5kg" /></div>
-        <div class="field"><label>存放格位<span class="req">*</span></label><input v-model="sf.zone" placeholder="如：冷藏柜A-2层（贴标签注明负责人）" /></div>
+        <div class="banner info"><span>🧊</span><div class="bx">入库即视为开始暂存计时：系统按「预计取走时间」超时 <b>{{ STORAGE_OVERTIME_HOURS }} 小时</b> 提醒管理员通知负责人；肉类/海鲜超时将按食品安全规则报废或取回。</div></div>
+        <div class="form-row">
+          <div class="field" style="flex: 2"><label>食材名称 / 数量<span class="req">*</span></label><input v-model="sf.name" placeholder="如：冷冻虾仁 1.5kg" /></div>
+          <div class="field"><label>食材类别<span class="req">*</span></label>
+            <select v-model="sf.category">
+              <option v-for="(m, k) in STORAGE_CATEGORY_META" :key="k" :value="k">{{ m.icon }} {{ m.label }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>存放格位<span class="req">*</span></label><input v-model="sf.zone" placeholder="如：冷冻柜B-2层（生熟分层）" /></div>
+        <div class="form-row">
+          <div class="field"><label>负责人姓名<span class="req">*</span></label><input v-model="sf.ownerName" /></div>
+          <div class="field"><label>负责人电话<span class="req">*</span></label><input v-model="sf.ownerPhone" /></div>
+          <div class="field"><label>预计取走时间<span class="req">*</span></label><input type="time" v-model="sf.expectedTakeAt" /></div>
+        </div>
+        <div class="field"><label>入库标签内容</label>
+          <input v-model="sf.label" :placeholder="`留空自动生成：${sf.name || '食材'} / ${sf.ownerName} ${sf.ownerPhone} / ${b.date}`" />
+          <div class="hint">标签须含食材、负责人、日期/电话，张贴于包装外部。</div>
+        </div>
+        <div v-if="sfErr" class="error-text">{{ sfErr }}</div>
       </div>
       <template #footer>
         <button class="btn" @click="showStorage = false">取消</button>
