@@ -34,6 +34,14 @@ function ensureKitchen() {
 
 const page = computed(() => route.params[0] ?? 'dashboard')
 
+// 路由级访问控制（防止直接输入 hash 越权）
+const pageDenied = computed(() => {
+  const role = auth.currentUser?.role
+  if (page.value === 'analytics' && role !== 'admin' && role !== 'staff') return true
+  if (page.value === 'create' && role !== 'resident') return true
+  return false
+})
+
 const nav = computed(() => {
   const role = auth.currentUser?.role
   const uid0 = auth.currentUser?.id ?? ''
@@ -113,6 +121,13 @@ function resetDemo() {
         <div style="margin-left: auto" class="small muted">一次使用，多方协同 · 卫生 · 邻里 · 设备</div>
       </header>
       <div class="content" @focusin="ensureKitchen">
+        <div v-if="pageDenied" class="card" style="max-width: 560px; margin: 40px auto; text-align: center">
+          <div style="font-size: 42px">🚫</div>
+          <h2>无权访问该页面</h2>
+          <p class="muted">该页面仅对厨房管理员 / 社区工作人员开放，请回到你的工作台。</p>
+          <button class="btn primary" style="margin-top: 8px" @click="push('/dashboard')">返回工作台</button>
+        </div>
+        <template v-else>
         <DashboardView v-if="page === 'dashboard'" />
         <BookingListView v-else-if="page === 'bookings'" />
         <BookingCreateView v-else-if="page === 'create'" />
@@ -121,6 +136,7 @@ function resetDemo() {
         <TasksView v-else-if="page === 'tasks'" />
         <PublicityView v-else-if="page === 'publicity'" />
         <AnalyticsView v-else-if="page === 'analytics'" />
+        </template>
       </div>
     </main>
   </div>

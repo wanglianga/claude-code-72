@@ -22,6 +22,7 @@ import PhotoCapture from '@/components/PhotoCapture.vue'
 import PhotoList from '@/components/PhotoList.vue'
 import IncidentCard from '@/components/IncidentCard.vue'
 import AcceptanceForm from '@/components/AcceptanceForm.vue'
+import { canViewBooking } from '@/utils/access'
 
 const props = defineProps<{ id: string }>()
 const auth = useAuthStore()
@@ -37,6 +38,11 @@ const dispute = computed(() => (b.value ? kitchen.disputes.slice().reverse().fin
 const isApplicant = computed(() => b.value?.applicantId === me.value.id)
 const isAdmin = computed(() => me.value.role === 'admin')
 const isStaff = computed(() => me.value.role === 'staff')
+
+// 数据隔离：预约人仅可查看本人记录；保洁/维修仅可查看分派给本角色事件的预约；管理员/社区工作人员全量
+const canView = computed(() =>
+  b.value ? canViewBooking(b.value, me.value.role, me.value.id, kitchen.incidents) : false
+)
 
 // ---------- 弹窗状态 ----------
 const showReject = ref(false)
@@ -239,6 +245,24 @@ function toggleRestrict() {
 <template>
   <div v-if="!b" class="empty">
     预约不存在或已被重置。<a @click="push('/bookings')">返回列表</a>
+  </div>
+  <div v-else-if="!canView" class="forbidden card">
+    <div class="fb-emoji">🚫</div>
+    <h2>无权访问该预约记录</h2>
+    <p class="muted">
+      该预约（<span class="mono">{{ b.code }}</span>）不属于你的账号。为保护负责人电话、食材、押金等敏感资料，
+      系统按角色隔离记录：
+    </p>
+    <ul class="fb-rules">
+      <li><b>居民 / 社团账号</b>：只能查看<b>本人发起</b>的预约完整记录，直接输入他人预约编号无法查看；</li>
+      <li><b>保洁 / 维修</b>：仅能查看分派给本角色处理的事件所关联的预约；</li>
+      <li><b>厨房管理员 / 社区工作人员</b>：因核验、验收、审批与调解职责可查看全部记录。</li>
+    </ul>
+    <p class="small muted">如确需了解该活动，请联系厨房管理员或在协作任务台中查看分派给你的任务。</p>
+    <div style="margin-top: 12px; display: flex; gap: 10px">
+      <button class="btn primary" @click="push('/bookings')">返回预约记录</button>
+      <button class="btn" @click="push('/dashboard')">返回工作台</button>
+    </div>
   </div>
   <div v-else>
     <!-- 头部 -->
@@ -702,4 +726,13 @@ function toggleRestrict() {
 .alloc-opt.disabled { opacity: .45; cursor: not-allowed; }
 .alloc-opt input { width: auto; }
 .action-card { border-left: 4px solid var(--c-brand); }
+.forbidden {
+  max-width: 620px; margin: 40px auto; text-align: center; padding: 36px 28px;
+}
+.forbidden .fb-emoji { font-size: 44px; margin-bottom: 8px; }
+.forbidden .fb-rules {
+  text-align: left; display: inline-block; margin: 8px auto 12px; padding-left: 20px;
+  color: var(--c-text-2); font-size: 13px;
+}
+.forbidden .fb-rules li { margin-bottom: 6px; }
 </style>

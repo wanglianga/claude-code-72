@@ -5,19 +5,30 @@ import { useKitchenStore } from '@/stores/kitchen'
 import { useRouter } from '@/router'
 import { ACTIVITY_RULES, STATUS_META } from '@/rules'
 import type { BookingStatus } from '@/types'
+import { canViewBooking } from '@/utils/access'
 
 const auth = useAuthStore()
 const kitchen = useKitchenStore()
 const { push } = useRouter()
 
+const role = computed(() => auth.currentUser!.role)
+
 const statusFilter = ref<'all' | BookingStatus>('all')
 const kindFilter = ref('all')
-const scope = ref<'all' | 'mine'>('all')
+// 居民默认且只能看「我发起的」；管理员/社区工作人员可切换全部
+const scope = ref<'all' | 'mine'>(role.value === 'resident' ? 'mine' : 'all')
 const keyword = ref('')
 
+// 居民只能看到本人记录；保洁/维修只能看到分派给本角色事件关联的记录（数据隔离）
 const list = computed(() => {
   return kitchen.bookings
-    .filter((b) => (scope.value === 'mine' ? b.applicantId === auth.currentUser!.id : true))
+    .filter((b) => {
+      if (role.value === 'resident') return b.applicantId === auth.currentUser!.id
+      if (role.value === 'cleaner' || role.value === 'repair') {
+        return canViewBooking(b, role.value, auth.currentUser!.id, kitchen.incidents)
+      }
+      return scope.value === 'mine' ? b.applicantId === auth.currentUser!.id : true
+    })
     .filter((b) => (statusFilter.value === 'all' ? true : b.status === statusFilter.value))
     .filter((b) => (kindFilter.value === 'all' ? true : b.activityKind === kindFilter.value))
     .filter((b) =>
@@ -46,15 +57,16 @@ function openIncCnt(b: { id: string }) {
   <div>
     <div class="card tight">
       <div class="filter-bar">
-        <div class="seg">
+        <div v-if="role === 'admin' || role === 'staff'" class="seg">
           <button :class="{ on: scope === 'all' }" @click="scope = 'all'">全部预约</button>
           <button :class="{ on: scope === 'mine' }" @click="scope = 'mine'">我发起的</button>
         </div>
+        <span v-else class="tag gray">仅显示与你相关的预约记录</span>
         <select v-model="kindFilter" style="width: 150px">
           <option value="all">全部活动类型</option>
           <option v-for="(r, k) in ACTIVITY_RULES" :key="k" :value="k">{{ r.label }}</option>
         </select>
-        <input v-model="keyword" placeholder="搜索编号 / 活动 / 负责人 / 组织" style="width: 240px" />
+        <input v-if="role !== 'cleaner' && role !== 'repair'" v-model="keyword" placeholder="搜索编号 / 活动 / 负责人 / 组织" style="width: 240px" />
         <button v-if="auth.currentUser?.role === 'resident'" class="btn primary" @click="push('/create')">
           ➕ 新建预约
         </button>

@@ -36,9 +36,20 @@ const myApprovals = computed(() =>
 const resolvedHistory = computed(() =>
   kitchen.incidents
     .filter((i) => i.status === 'resolved')
+    // 保洁/维修只看本角色历史；居民只看自己预约的事件，避免跨预约信息泄露
+    .filter((i) => {
+      if (role.value === 'cleaner' || role.value === 'repair') return i.owner === role.value
+      if (role.value === 'resident') {
+        return kitchen.bookingById(i.bookingId)?.applicantId === auth.currentUser!.id
+      }
+      return true
+    })
     .sort((a, b) => ((a.resolvedAt ?? '') < (b.resolvedAt ?? '') ? 1 : -1))
     .slice(0, 15)
 )
+// 跨角色看板仅管理员/社区工作人员可见
+const canSeeAll = computed(() => role.value === 'admin' || role.value === 'staff')
+if (!canSeeAll.value && tab.value === 'all') tab.value = 'mine'
 </script>
 
 <template>
@@ -54,11 +65,16 @@ const resolvedHistory = computed(() =>
 
     <div class="seg" style="margin-bottom: 14px">
       <button :class="{ on: tab === 'mine' }" @click="tab = 'mine'">我的待办（{{ myIncidents.length }}）</button>
-      <button :class="{ on: tab === 'approvals' }" @click="tab = 'approvals'">待我审批（{{ myApprovals.length }}）</button>
+      <button v-if="role !== 'resident'" :class="{ on: tab === 'approvals' }" @click="tab = 'approvals'">待我审批（{{ myApprovals.length }}）</button>
       <button v-if="role === 'staff'" :class="{ on: tab === 'disputes' }" @click="tab = 'disputes'">
         押金争议（{{ myDisputes.length }}）
       </button>
-      <button :class="{ on: tab === 'all' }" @click="tab = 'all'">全部未闭环事件（{{ allOpen.length }}）</button>
+      <button v-if="canSeeAll" :class="{ on: tab === 'all' }" @click="tab = 'all'">全部未闭环事件（{{ allOpen.length }}）</button>
+    </div>
+
+    <div v-if="role === 'resident'" class="banner ok">
+      <span>🏠</span>
+      <div class="bx">你是预约人：可以在「预约记录」中查看<b>仅属于自己</b>的完整记录并跟进押金；使用中发现问题可在自己的预约详情页上报事件。</div>
     </div>
 
     <!-- 我的事件 -->

@@ -29,10 +29,12 @@ function wearColor(w: number) {
 }
 
 function usageOf(rid: string) {
+  // 占用明细（活动名称/负责人）仅管理角色可见；其他角色只看到占用数量
   return kitchen.bookings.filter(
     (bk) => ['approved', 'checked', 'closing'].includes(bk.status) && bk.allocatedResourceIds.includes(rid)
   )
 }
+const canSeeUsageDetail = computed(() => auth.currentUser!.role === 'admin' || auth.currentUser!.role === 'staff')
 
 function toggleStatus(rid: string) {
   const r = kitchen.resources.find((x) => x.id === rid)!
@@ -81,10 +83,13 @@ function toggleStatus(rid: string) {
           </div>
           <div class="rc-usage">
             <template v-if="usageOf(r.id).length">
-              <span class="tiny muted">当前/待开始占用：</span>
-              <a v-for="bk in usageOf(r.id)" :key="bk.id" class="tiny" @click="push(`/booking/${bk.id}`)">
-                {{ bk.date }} {{ bk.startAt }} {{ bk.title }}；
-              </a>
+              <template v-if="canSeeUsageDetail">
+                <span class="tiny muted">当前/待开始占用：</span>
+                <a v-for="bk in usageOf(r.id)" :key="bk.id" class="tiny" @click="push(`/booking/${bk.id}`)">
+                  {{ bk.date }} {{ bk.startAt }} {{ bk.title }}；
+                </a>
+              </template>
+              <span v-else class="tiny muted">该时段已有 {{ usageOf(r.id).length }} 个预约占用（明细仅管理角色可见）</span>
             </template>
             <span v-else class="tiny muted">近期无占用</span>
           </div>

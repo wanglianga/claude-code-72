@@ -16,6 +16,7 @@ import type {
 import { seedBookings, seedIncidents, seedResources } from '@/seed'
 import { ACTIVITY_RULES } from '@/rules'
 import { nowStr, uid } from '@/utils/format'
+import { validateAcceptance, type AcceptFormItem } from '@/utils/access'
 
 // 各类活动的计费费率（元/分钟）
 const RATES = {
@@ -540,8 +541,17 @@ export const useKitchenStore = defineStore('kitchen', {
       this.persist()
     },
 
-    /** 根据七项验收结果与活动规则自动试算扣费 */
-    computeDeposit(b: Booking, acceptance: Acceptance) {
+    /** 根据七项验收结果与活动规则自动试算扣费（接受表单态或正式验收对象） */
+    computeDeposit(
+      b: Booking,
+      acceptance: {
+        checkerId?: string
+        at?: string
+        overtimeMinutes: number
+        cleaningExtraMinutes: number
+        items: { result: string; label: string }[]
+      }
+    ) {
       const rate = RATES[b.activityKind]
       const fails = acceptance.items.filter((i) => i.result === 'fail')
       const redirties = acceptance.items.filter((i) => i.result === 'redirty')
@@ -588,30 +598,52 @@ export const useKitchenStore = defineStore('kitchen', {
     submitAcceptance(
       b: Booking,
       checkerName: string,
+      checkerRole: string,
       data: {
-        items: AcceptanceItem[]
+        items: AcceptFormItem[]
         overtimeMinutes: number
         cleaningExtraMinutes: number
         overallComment?: string
       }
-    ): { deduction: number; reasons: string[] } {
+    ): { ok: boolean; msg?: string; deduction?: number; reasons?: string[] } {
+      // 权限兜底：仅厨房管理员可出具验收
+      if (checkerRole !== 'admin') {
+        return { ok: false, msg: '仅厨房管理员可以提交验收' }
+      }
+      // 完整性兜底：空验收（未逐项检查 / 无总评 / 无留证）一律拒绝，状态保持「待验收」
+      const v = validateAcceptance(
+        data.items,
+        data.overallComment ?? '',
+        data.overtimeMinutes,
+        data.cleaningExtraMinutes
+      )
+      if (!v.ok) return { ok: false, msg: v.msg }
+
+      // 规范化为领域对象（此时 7 项均已显式确认）
+      const items: AcceptanceItem[] = data.items.map((i) => ({
+        key: i.key,
+        label: i.label,
+        result: i.result as AcceptanceItem['result'],
+        note: i.note,
+        photos: i.photos
+      }))
       const acceptance: Acceptance = {
         checkerId: checkerName,
         at: nowStr(),
         overtimeMinutes: data.overtimeMinutes,
         cleaningExtraMinutes: data.cleaningExtraMinutes,
-        items: data.items,
+        items,
         overallComment: data.overallComment
       }
       b.acceptance = acceptance
       b.status = 'completed'
       this.tl(
         b,
-        `七项逐项验收完成：${data.items.filter((i) => i.result === 'pass').length} 合格 / ` +
-          `${data.items.filter((i) => i.result === 'redirty').length} 补清洁 / ` +
-          `${data.items.filter((i) => i.result === 'fail').length} 不合格`,
+        `七项逐项验收完成：${items.filter((i) => i.result === 'pass').length} 合格 / ` +
+          `${items.filter((i) => i.result === 'redirty').length} 补清洁 / ` +
+          `${items.filter((i) => i.result === 'fail').length} 不合格`,
         checkerName,
-        data.items.some((i) => i.result !== 'pass') ? 'amber' : 'green'
+        items.some((i) => i.result !== 'pass') ? 'amber' : 'green'
       )
 
       // 押金决定
@@ -642,7 +674,7 @@ export const useKitchenStore = defineStore('kitchen', {
         this.tl(b, `押金扣费 ${deduction} 元，退还 ${b.depositRequired - deduction} 元`, checkerName, 'amber')
       }
       this.persist()
-      return { deduction, reasons }
+      return { ok: true, deduction, reasons }
     },
 
     // ================= 押金争议（社区工作人员调解） =================
