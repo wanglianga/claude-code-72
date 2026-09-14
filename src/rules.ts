@@ -1,0 +1,125 @@
+import type {
+  ActivityRule,
+  BookingStatus,
+  IncidentOwner,
+  IncidentType,
+  ResourceType,
+  Role
+} from '@/types'
+
+export const ACTIVITY_RULES: Record<string, ActivityRule> = {
+  'charity-class': {
+    kind: 'charity-class',
+    label: '公益课堂',
+    deposit: 0,
+    depositFreeEligible: true,
+    cleaningRule: '基础保洁由社区保洁免费提供；厨房使用后仅需初清（台面归位、垃圾入桶）',
+    publicityRule: '默认在社区公示栏与小程序公示活动成果，鼓励附现场照片与受益人数',
+    noticeRule: '标准告知 + 公益活动食品安全承诺（集体分餐须留样 48 小时）',
+    approveRole: 'staff',
+    maxHours: 3,
+    color: 'green'
+  },
+  'neighbor-feast': {
+    kind: 'neighbor-feast',
+    label: '邻里宴',
+    deposit: 200,
+    depositFreeEligible: false,
+    cleaningRule: '使用者自行初清 + 保洁深度保洁；按 20 元/小时预收清洁费，多退少补',
+    publicityRule: '活动前公示时间与参与范围，活动后公示卫生验收结果，接受邻里监督',
+    noticeRule: '标准告知 + 集体聚餐登记（菜品清单、参与人数、过敏原提示）',
+    approveRole: 'admin',
+    maxHours: 5,
+    color: 'brand'
+  },
+  commercial: {
+    kind: 'commercial',
+    label: '商业试吃',
+    deposit: 800,
+    depositFreeEligible: false,
+    cleaningRule: '承担全额清洁成本（60 元/小时起），油炸后须专业除油，验收不合格照价扣费',
+    publicityRule: '强制公示商家名称、活动内容与收费性质；公示期不少于 3 天接受投诉',
+    noticeRule: '强化告知：须提交食材来源凭证、从业人员健康证明、试吃食品标签',
+    approveRole: 'staff',
+    maxHours: 4,
+    color: 'purple'
+  },
+  private: {
+    kind: 'private',
+    label: '居民自用',
+    deposit: 100,
+    depositFreeEligible: false,
+    cleaningRule: '谁使用谁清洁，按七项标准逐项验收；不合格扣保洁费 40 元/次',
+    publicityRule: '仅公示时段占用信息（不公开姓名），不做成果公示',
+    noticeRule: '标准食品安全告知',
+    approveRole: 'admin',
+    maxHours: 3,
+    color: 'blue'
+  }
+}
+
+export const STATUS_META: Record<BookingStatus, { label: string; color: string }> = {
+  draft: { label: '待提交', color: 'gray' },
+  pending: { label: '待审批', color: 'amber' },
+  approved: { label: '已批准·待用前核验', color: 'blue' },
+  checked: { label: '使用中', color: 'green' },
+  closing: { label: '待验收', color: 'amber' },
+  completed: { label: '已完成', color: 'gray' },
+  rejected: { label: '已驳回', color: 'red' },
+  canceled: { label: '已取消', color: 'gray' }
+}
+
+export const RESOURCE_META: Record<ResourceType, { label: string; icon: string }> = {
+  stove: { label: '灶台', icon: '🔥' },
+  oven: { label: '烤箱', icon: '♨️' },
+  fridge: { label: '冰箱', icon: '🧊' },
+  sterilizer: { label: '消毒柜', icon: '🫧' },
+  tableware: { label: '餐具', icon: '🍽️' },
+  sorting: { label: '垃圾分类点', icon: '♻️' }
+}
+
+export const INCIDENT_META: Record<
+  IncidentType,
+  { label: string; icon: string; defaultOwner: IncidentOwner; level: 'low' | 'mid' | 'high' }
+> = {
+  smoke: { label: '油烟过大', icon: '💨', defaultOwner: 'admin', level: 'mid' },
+  damage: { label: '设备损坏', icon: '🔧', defaultOwner: 'repair', level: 'high' },
+  complaint: { label: '邻里投诉', icon: '📞', defaultOwner: 'staff', level: 'high' },
+  mixing: { label: '食材混放', icon: '🥩', defaultOwner: 'cleaner', level: 'mid' },
+  'extra-people': { label: '临时加人', icon: '👥', defaultOwner: 'admin', level: 'low' },
+  overtime: { label: '活动超时', icon: '⏰', defaultOwner: 'admin', level: 'mid' }
+}
+
+export const ROLE_META: Record<Role, { label: string; icon: string }> = {
+  resident: { label: '居民/预约人', icon: '🏠' },
+  admin: { label: '厨房管理员', icon: '🗝️' },
+  cleaner: { label: '保洁', icon: '🧹' },
+  repair: { label: '维修', icon: '🛠️' },
+  staff: { label: '社区工作人员', icon: '🏛️' }
+}
+
+export const COOKING_TYPES = ['家常烹饪', '烘焙', '油炸', '蒸煮', '卤味', '食品分装'] as const
+
+export const CLEAN_REQUIREMENTS: { key: string; icon: string; text: string }[] = [
+  { key: 'stove', icon: '🔥', text: '灶台：关火断气，灶面无油污，烟机油盒清空' },
+  { key: 'counter', icon: '🧽', text: '台面：清洁剂擦拭，无水渍残渣，物品归位' },
+  { key: 'fridge', icon: '🧊', text: '冰箱：个人食材全部取走，不留隔夜半成品（留样除外）' },
+  { key: 'trash', icon: '♻️', text: '垃圾：厨余/可回收/其他分类投放到分类点，废油单独交存' },
+  { key: 'floor', icon: '🧴', text: '地面：清扫拖净，排水沟无堵塞，地垫晾挂' },
+  { key: 'tableware', icon: '🍽️', text: '餐具：洗净入消毒柜完成消毒，破损登记赔偿' },
+  { key: 'equipment', icon: '🔌', text: '设备：断电复位，烤箱清空余温，异常立即上报' }
+]
+
+export const FOOD_SAFETY_NOTICE = {
+  title: '共享厨房食品安全告知书',
+  version: '2026版',
+  content: [
+    '一、凡患有发热、腹泻、咽喉肿痛、化脓性皮肤病等有碍食品安全病症者，不得进入厨房操作。',
+    '二、操作前规范洗手、佩戴口罩与帽子；生熟刀具、砧板分开使用，肉类中心温度不低于 70℃。',
+    '三、食材须当日采购并保留凭证，不得使用过期、腐败、来源不明食材；冰箱暂存须贴标签注明使用人与日期。',
+    '四、油炸食品油温控制在 190℃ 以内，专人看管，离人关火；废油倒入专用废油桶，严禁倒入下水道。',
+    '五、集体聚餐 / 课堂分餐每样菜品留样不少于 125g，冷藏保存 48 小时。',
+    '六、商业试吃须额外出示从业人员健康证明与食材来源票据，成品标注制作时间与过敏原。',
+    '七、违反告知造成食品安全事故的，由预约人（负责人）依法承担责任，押金不足以弥补损失的继续追偿。'
+  ]
+}
