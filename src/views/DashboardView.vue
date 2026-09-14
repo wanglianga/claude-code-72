@@ -5,6 +5,7 @@ import { useKitchenStore } from '@/stores/kitchen'
 import { useRouter } from '@/router'
 import { ACTIVITY_RULES, ROLE_META, STATUS_META, STORAGE_CATEGORY_META } from '@/rules'
 import type { StorageState } from '@/types'
+import { storageAlertKind, storageTimeText } from '@/utils/storageAlert'
 
 const auth = useAuthStore()
 const kitchen = useKitchenStore()
@@ -12,10 +13,10 @@ const { push } = useRouter()
 const user = computed(() => auth.currentUser!)
 const role = computed(() => user.value.role)
 
-// 管理员/社区工作人员可见的超时在库食材
-const overdueStorage = computed(() =>
-  role.value === 'admin' || role.value === 'staff' ? kitchen.overdueStorageItems : []
-)
+// 管理员/社区工作人员：真实超时 vs 活动取消滞留（两类必须分开，取消未到取走时间不算超时）
+const isManager = computed(() => role.value === 'admin' || role.value === 'staff')
+const trueOverdueStorage = computed(() => (isManager.value ? kitchen.overdueStorageItems : []))
+const canceledStorage = computed(() => (isManager.value ? kitchen.canceledPendingStorage : []))
 function catLabel(k: string) {
   return STORAGE_CATEGORY_META[k]?.label ?? k
 }
@@ -34,12 +35,15 @@ function stateLabel(s: StorageState) {
 // 居民本人的在库暂存食材
 const myStorage = computed(() =>
   role.value === 'resident'
-    ? kitchen.activeStorageItems.filter((x) => x.booking.applicantId === user.value.id)
+    ? kitchen.activeStorageItems
+        .filter((x) => x.booking.applicantId === user.value.id)
+        .map((x) => ({
+          ...x,
+          alert: storageAlertKind(x.item, x.booking.status)
+        }))
     : []
 )
-const myOverdueCount = computed(
-  () => myStorage.value.filter((x) => x.overdueHours >= 2 || x.item.state === 'pending').length
-)
+const myAttentionCount = computed(() => myStorage.value.filter((x) => x.alert !== 'none').length)
 
 const myBookings = computed(() =>
   kitchen.bookings.filter((b) => b.applicantId === user.value.id).slice(0, 5)
@@ -140,11 +144,11 @@ const greetings: Record<string, string> = {
       </table>
     </div>
 
-    <!-- 超时食材提醒（管理员） -->
-    <div v-if="overdueStorage.length" class="card overdue-card">
+    <!-- 真实超时食材提醒（管理员）：只有超过预计取走时间 2 小时才进入此卡 -->
+    <div v-if="trueOverdueStorage.length" class="card overdue-card">
       <div class="card-title">
         <h2>⏰ 食材暂存超时提醒</h2>
-        <span class="tag red">{{ overdueStorage.length }} 项待处置</span>
+        <span class="tag red">{{ trueOverdueStorage.length }} 项真实超时</span>
       </div>
       <div class="small muted" style="margin-bottom: 10px">
         已超过预计取走时间 2 小时未取走。请通知负责人；肉类/海鲜必须按食品安全规则报废或取回，处置费计入押金，公益课堂可豁免。
@@ -155,12 +159,16 @@ const greetings: Record<string, string> = {
         </thead>
         <tbody>
           <tr
-            v-for="x in overdueStorage"
+            v-for="x in trueOverdueStorage"
             :key="x.item.id"
             class="clickable"
             @click="push(`/booking/${x.booking.id}`)"
           >
-            <td><strong>{{ x.item.name }}</strong><div class="tiny muted">{{ x.booking.title }}</div></td>
+            <td>
+              <strong>{{ x.item.name }}</strong>
+              <span v-if="x.item.category === 'meat-seafood'" class="tag red" style="margin-left: 4px">肉类/海鲜</span>
+              <div v-if="x.booking.status === 'canceled'" class="tiny red">关联活动已取消</div>
+            </td>
             <td>
               <span class="tag" :class="x.item.category === 'meat-seafood' ? 'red' : ''">
                 {{ catLabel(x.item.category) }}
@@ -169,7 +177,44 @@ const greetings: Record<string, string> = {
             <td class="small">{{ x.item.ownerName }}<br />{{ x.item.ownerPhone }}</td>
             <td class="small">{{ x.item.zone }}</td>
             <td class="small">{{ x.item.expectedTakeAt }}</td>
-            <td><span class="tag red">{{ x.overdueHours.toFixed(1) }} 小时</span></td>
+            <td><span class="tag red">超时 {{ x.overdueHours.toFixed(1) }} 小时</span></td>
+            <td><span class="tag amber">{{ stateLabel(x.item.state) }}</span></td>
+            <td><a>去处置 →</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 活动取消后的滞留待处置食材（取走时间未到 → 不计超时、不显示负时长） -->
+    <div v-if="canceledStorage.length" class="card canceled-card">
+      <div class="card-title">
+        <h2>🚫 活动取消待处置食材</h2>
+        <span class="tag amber">{{ canceledStorage.length }} 项滞留</span>
+      </div>
+      <div class="small muted" style="margin-bottom: 10px">
+        关联活动已取消、食材仍滞留库中；预计取走时间尚未到，<b>不属于超时</b>，请通知负责人取回或提前处置，避免到期后转为真实超时。
+      </div>
+      <table class="data">
+        <thead>
+          <tr><th>食材</th><th>类别</th><th>负责人</th><th>格位</th><th>原预计取走</th><th>剩余时间</th><th>状态</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="x in canceledStorage"
+            :key="x.item.id"
+            class="clickable"
+            @click="push(`/booking/${x.booking.id}`)"
+          >
+            <td>
+              <strong>{{ x.item.name }}</strong>
+              <span v-if="x.item.category === 'meat-seafood'" class="tag red" style="margin-left: 4px">肉类/海鲜</span>
+              <div class="tiny muted">{{ x.booking.title }}</div>
+            </td>
+            <td><span class="tag" :class="x.item.category === 'meat-seafood' ? 'red' : ''">{{ catLabel(x.item.category) }}</span></td>
+            <td class="small">{{ x.item.ownerName }}<br />{{ x.item.ownerPhone }}</td>
+            <td class="small">{{ x.item.zone }}</td>
+            <td class="small">{{ x.item.expectedTakeAt }}</td>
+            <td><span class="tag amber">距取走还有 {{ x.remainHours.toFixed(1) }} 小时</span></td>
             <td><span class="tag amber">{{ stateLabel(x.item.state) }}</span></td>
             <td><a>去处置 →</a></td>
           </tr>
@@ -216,7 +261,7 @@ const greetings: Record<string, string> = {
     <div v-if="role === 'resident' && myStorage.length" class="card overdue-card">
       <div class="card-title">
         <h2>🧊 我的暂存食材</h2>
-        <span class="tag" :class="myOverdueCount ? 'red' : 'green'">{{ myOverdueCount ? myOverdueCount + ' 项超时' : '在库中' }}</span>
+        <span class="tag" :class="myAttentionCount ? 'red' : 'green'">{{ myAttentionCount ? myAttentionCount + ' 项需处理' : '在库中' }}</span>
       </div>
       <table class="data">
         <thead><tr><th>食材</th><th>格位</th><th>关联预约</th><th>预计取走</th><th>状态</th><th></th></tr></thead>
@@ -230,10 +275,11 @@ const greetings: Record<string, string> = {
             <td class="small muted">{{ x.booking.title }}</td>
             <td class="small">{{ x.item.expectedTakeAt }}</td>
             <td>
-              <span v-if="x.overdueHours >= 2" class="tag red">超时 {{ x.overdueHours.toFixed(1) }} 小时，请尽快取走</span>
-              <span v-else-if="x.item.state === 'pending'" class="tag red">待处理</span>
-              <span v-else-if="x.item.state === 'notified'" class="tag amber">已收到通知</span>
-              <span v-else class="tag green">在库</span>
+              <span v-if="x.alert === 'overdue'" class="tag red">{{ storageTimeText(x.item) }}，请尽快取走</span>
+              <span v-else-if="x.alert === 'canceled'" class="tag amber">活动已取消待处置 · {{ storageTimeText(x.item) }}</span>
+              <span v-else-if="x.item.state === 'pending'" class="tag red">待处理 · {{ storageTimeText(x.item) }}</span>
+              <span v-else-if="x.item.state === 'notified'" class="tag amber">已收到通知 · {{ storageTimeText(x.item) }}</span>
+              <span v-else class="tag green">在库 · {{ storageTimeText(x.item) }}</span>
             </td>
             <td><a>查看 →</a></td>
           </tr>
@@ -292,6 +338,7 @@ const greetings: Record<string, string> = {
 
 <style scoped>
 .overdue-card { border-left: 4px solid var(--c-red); }
+.canceled-card { border-left: 4px solid var(--c-amber); }
 .rule-box {
   border: 1px solid var(--c-border); border-radius: 8px; padding: 12px;
   background: var(--c-surface-2); display: flex; flex-direction: column; gap: 7px;

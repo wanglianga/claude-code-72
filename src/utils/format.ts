@@ -43,8 +43,8 @@ export function parseDateTime(s: string): number {
 }
 
 // 当前是否已超过某时刻 overtimeHours 小时
-export function hoursSince(expectedAt: string): number {
+export function hoursSince(expectedAt: string, now: number = Date.now()): number {
   const t = parseDateTime(expectedAt)
   if (!t) return 0
-  return (Date.now() - t) / 3600000
+  return (now - t) / 3600000
 }

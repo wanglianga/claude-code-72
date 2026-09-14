@@ -27,7 +27,7 @@ import IncidentCard from '@/components/IncidentCard.vue'
 import AcceptanceForm from '@/components/AcceptanceForm.vue'
 import StorageItemCard from '@/components/StorageItemCard.vue'
 import { canViewBooking } from '@/utils/access'
-import { hoursSince } from '@/utils/format'
+import { storageAlertKind } from '@/utils/storageAlert'
 
 const props = defineProps<{ id: string }>()
 const auth = useAuthStore()
@@ -48,6 +48,18 @@ const isStaff = computed(() => me.value.role === 'staff')
 const canView = computed(() =>
   b.value ? canViewBooking(b.value, me.value.role, me.value.id, kitchen.incidents) : false
 )
+
+// 暂存食材按真实超时 / 活动取消滞留分类（取消但取走时间未到不算超时）
+const storageSummary = computed(() => {
+  const result: { overdue: { name: string }[]; canceled: { name: string }[] } = { overdue: [], canceled: [] }
+  if (!b.value) return result
+  for (const s of b.value.storageItems) {
+    const k = storageAlertKind(s, b.value.status)
+    if (k === 'overdue') result.overdue.push({ name: s.name })
+    else if (k === 'canceled') result.canceled.push({ name: s.name })
+  }
+  return result
+})
 
 // ---------- 弹窗状态 ----------
 const showReject = ref(false)
@@ -451,16 +463,25 @@ function toggleRestrict() {
           />
           <div v-if="!b.storageItems.length" class="small muted">暂无暂存记录。入库时必须登记格位、标签、负责人与预计取走时间。</div>
 
-          <!-- 超时汇总提示 -->
+          <!-- 超时/取消滞留汇总提示 -->
           <div
-            v-if="b.storageItems.some((s) => ['stored', 'notified', 'pending'].includes(s.state) && hoursSince(s.expectedTakeAt) >= STORAGE_OVERTIME_HOURS)"
-            class="banner warn"
+            v-for="kind in ['overdue', 'canceled']"
+            :key="kind"
+            v-show="storageSummary[kind as 'overdue' | 'canceled'].length"
+            class="banner"
+            :class="kind === 'overdue' ? 'warn' : 'info'"
             style="margin-top: 12px"
           >
-            <span>⏰</span>
+            <span>{{ kind === 'overdue' ? '⏰' : '🚫' }}</span>
             <div class="bx">
-              存在超时未取食材：管理员请先<b>通知负责人</b>，再转为待处理食材或完成处置；
-              肉类/海鲜必须按食品安全规则<b>报废或取回</b>。处置费将计入押金，公益课堂可豁免。验收前所有在库食材必须已取走或处置完毕。
+              <template v-if="kind === 'overdue'">
+                存在真实超时未取食材（{{ storageSummary.overdue.map((s) => s.name).join('、') }}）：管理员请先<b>通知负责人</b>，再转为待处理或完成处置；
+                肉类/海鲜必须按食品安全规则<b>报废或取回</b>。处置费计入押金，公益课堂可豁免。验收前所有在库食材必须已取走或处置完毕。
+              </template>
+              <template v-else>
+                活动已取消，下列食材滞留库中（{{ storageSummary.canceled.map((s) => s.name).join('、') }}）：预计取走时间尚未到，<b>不计超时</b>，
+                请通知负责人提前取回或完成处置，避免到期后转为真实超时。
+              </template>
             </div>
           </div>
         </div>

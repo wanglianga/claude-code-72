@@ -3,8 +3,8 @@ import { computed } from 'vue'
 import type { Booking, StorageCategory, StorageItem } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useKitchenStore } from '@/stores/kitchen'
-import { STORAGE_CATEGORY_META, STORAGE_FEES, STORAGE_OVERTIME_HOURS } from '@/rules'
-import { hoursSince } from '@/utils/format'
+import { STORAGE_CATEGORY_META, STORAGE_FEES } from '@/rules'
+import { overtimeHours, storageAlertKind, storageTimeText } from '@/utils/storageAlert'
 import PhotoList from '@/components/PhotoList.vue'
 import StorageActions from '@/components/StorageActions.vue'
 
@@ -17,8 +17,10 @@ const meat = computed(() => props.item.category === ('meat-seafood' as StorageCa
 const isAdmin = computed(() => auth.currentUser!.role === 'admin')
 const isStaff = computed(() => auth.currentUser!.role === 'staff')
 const canManage = computed(() => isAdmin.value || isStaff.value)
-const overdueHours = computed(() => hoursSince(props.item.expectedTakeAt))
-const overdue = computed(() => ['stored', 'notified', 'pending'].includes(props.item.state) && overdueHours.value >= STORAGE_OVERTIME_HOURS)
+const alertKind = computed(() => storageAlertKind(props.item, props.booking.status))
+const overdueH = computed(() => overtimeHours(props.item))
+const overdue = computed(() => alertKind.value === 'overdue')
+const canceledPending = computed(() => alertKind.value === 'canceled')
 
 const stateMeta: Record<string, { label: string; cls: string }> = {
   stored: { label: '在库', cls: 'green' },
@@ -45,7 +47,7 @@ const feeText = computed(() => {
 </script>
 
 <template>
-  <div class="st-card" :class="{ overdue, pending: item.state === 'pending' }">
+  <div class="st-card" :class="{ overdue, canceled: canceledPending, pending: item.state === 'pending' }">
     <div class="st-head">
       <span style="font-size: 20px">{{ cat.icon }}</span>
       <div style="flex: 1">
@@ -53,7 +55,11 @@ const feeText = computed(() => {
         <span class="tag" :class="stateMeta[item.state].cls" style="margin-left: 8px">{{ stateMeta[item.state].label }}</span>
         <span v-if="meat" class="tag red" style="margin-left: 4px">肉类/海鲜</span>
       </div>
-      <div v-if="overdue" class="tag red">⏰ 超时 {{ overdueHours.toFixed(1) }} 小时</div>
+      <span v-if="overdue" class="tag red">⏰ 超时 {{ overdueH?.toFixed(1) }} 小时</span>
+      <span v-else-if="canceledPending" class="tag amber">🚫 活动取消待处置</span>
+    </div>
+    <div v-if="overdue || canceledPending" class="time-hint small" :class="overdue ? 'red' : 'amber'">
+      {{ storageTimeText(item) }}
     </div>
 
     <div class="st-grid small">
@@ -112,8 +118,12 @@ const feeText = computed(() => {
   border: 1px solid var(--c-border); border-radius: 8px; padding: 12px 14px;
   margin-bottom: 10px; background: var(--c-surface-2);
 }
-.st-card.overdue { border-color: #ecd9ae; background: var(--c-amber-soft); }
+.st-card.overdue { border-color: #e8a097; background: var(--c-red-soft); }
 .st-card.pending { border-color: #f0c2bc; background: var(--c-red-soft); }
+.st-card.canceled { border-color: #ecd9ae; background: var(--c-amber-soft); }
+.time-hint { margin-bottom: 8px; font-weight: 500; }
+.time-hint.red { color: var(--c-red); }
+.time-hint.amber { color: var(--c-amber); }
 .st-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px; }
 .st-notes { margin-top: 8px; padding: 6px 10px; background: #fff; border-radius: 6px; border: 1px solid var(--c-border); display: flex; flex-direction: column; gap: 2px; }

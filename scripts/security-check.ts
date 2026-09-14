@@ -17,6 +17,7 @@ const mem = new Map<string, string>()
 
 import { useKitchenStore } from '@/stores/kitchen'
 import { canViewBooking, emptyAcceptanceItems, validateAcceptance } from '@/utils/access'
+import { storageAlertKind, overtimeHours, storageTimeText } from '@/utils/storageAlert'
 import type { Booking, Photo } from '@/types'
 
 let pass = 0
@@ -344,6 +345,53 @@ rd2 = kitchen.submitAcceptance(targetD, '张管理', 'admin', {
   overallComment: '处置完成后验收合格'
 })
 assert('食材处置完毕后验收成功，处置费 60 计入押金', rd2.ok === true && (rd2.deduction ?? 0) === 60, `deduction=${rd2.deduction}`)
+
+// ================= E. 取消滞留 vs 真实超时 的分类 =================
+console.log('\n[E] 工作台提醒分类：活动取消待处置 ≠ 食材暂存超时（不得出现负时长）')
+
+const NOW = Date.parse('2026-09-15T10:00:00') // 固定“当前时间”便于构造双场景
+
+// E1. 活动已取消 + 预计取走在未来 → canceled，不是 overdue
+const futureItem = { state: 'pending' as const, expectedTakeAt: '2026-09-15 20:00' }
+assert('未来取走 + 活动取消 → 分类 canceled', storageAlertKind(futureItem, 'canceled', NOW) === 'canceled')
+assert('取消滞留不算超时（overdueHours 为 null，杜绝负数）', overtimeHours(futureItem, NOW) === null)
+const t1 = storageTimeText(futureItem, NOW)
+assert('取消滞留时长文案显示“剩余 10.0 小时”而非负超时', /距预计取走还有 10\.0 小时/.test(t1), t1)
+assert('文案中绝不出现负的“超时”', !/超时\s*-/.test(t1))
+
+// E2. 活动已取消但取走时间已过 2 小时以上 → 仍按真实超时（食品安全优先）
+const canceledOverdueItem = { state: 'pending' as const, expectedTakeAt: '2026-09-14 20:00' }
+assert('已取消但真实超时 14 小时 → 分类 overdue（优先食安）', storageAlertKind(canceledOverdueItem, 'canceled', NOW) === 'overdue')
+assert('超时时长为正数 14.0', (overtimeHours(canceledOverdueItem, NOW) ?? 0).toFixed(1) === '14.0')
+
+// E3. 正常预约未取消 + 未来取走 → none，不应出现在任何提醒
+assert('正常预约 + 未来取走 → none', storageAlertKind(futureItem, 'checked', NOW) === 'none')
+
+// E4. 正常预约 + 已过 2 小时 → overdue，正数
+const normalOverdueItem = { state: 'notified' as const, expectedTakeAt: '2026-09-15 07:00' }
+assert('正常预约超时 3 小时 → overdue', storageAlertKind(normalOverdueItem, 'closing', NOW) === 'overdue')
+assert('超时显示正数 3.0 小时', storageTimeText(normalOverdueItem, NOW) === '超时 3.0 小时')
+
+// E5. 已终结状态（取走/报废/清空）一律 none
+assert('已取走记录不提醒', storageAlertKind({ state: 'taken' as const, expectedTakeAt: '2000-01-01 00:00' }, 'completed', NOW) === 'none')
+assert('已报废记录不提醒', storageAlertKind({ state: 'disposed' as const, expectedTakeAt: '2000-01-01 00:00' }, 'canceled', NOW) === 'none')
+
+// E6. store getter 双场景：种子 b-008（取消、虾仁 pending、预计 09-15 20:00）在演示当前时间下应进取消滞留而非超时
+kitchen.resetDemo()
+const overdueList = kitchen.overdueStorageItems
+const canceledList = kitchen.canceledPendingStorage
+const inOverdue = overdueList.some((x) => x.item.id === 'st-6')
+const inCanceled = canceledList.some((x) => x.item.id === 'st-6')
+assert('种子虾仁(st-6)不出现在“真实超时”列表', inOverdue === false)
+assert('种子虾仁(st-6)出现在“活动取消待处置”列表', inCanceled === true)
+// 取消滞留列表的剩余时长必须非负
+assert('取消滞留剩余时长全部为非负数', canceledList.every((x) => x.remainHours >= 0))
+// 真实超时列表的超时时长必须全部为正数（>=2 小时阈值）
+assert('真实超时列表时长全部 ≥2 小时（无负数）', overdueList.every((x) => x.overdueHours >= 2))
+
+// E7. 构造一个“真实超时的正常预约”：给 b-006 的肉丸把预计取走改到过去（种子本就是 09-13，演示日 09-14 已超时）
+const meatballInOverdue = overdueList.some((x) => x.item.id === 'st-4')
+assert('b-006 炸肉丸(st-4) 出现在“真实超时”列表', meatballInOverdue === true)
 
 console.log(`\n========== 结果：${pass} 通过，${fail} 失败 ==========`)
 if (fail > 0) process.exit(1)

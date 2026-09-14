@@ -12,6 +12,17 @@ temp/
 .env.*
 !.env.example
 *.local
+*.key
+*.pem
+*.crt
+*.secret
+*.token
+*.credential
+*credentials*
+*connection-string*
+*.db
+*.sqlite
+*.sqlite3
 .idea/
 .vscode/
 memory/

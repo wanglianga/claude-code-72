@@ -20,10 +20,10 @@ import { seedBookings, seedIncidents, seedResources } from '@/seed'
 import {
   ACTIVITY_RULES,
   MEAT_SEAFOOD_RULE,
-  STORAGE_FEES,
-  STORAGE_OVERTIME_HOURS
+  STORAGE_FEES
 } from '@/rules'
 import { hoursSince, nowStr, parseDateTime, uid } from '@/utils/format'
+import { storageAlertKind } from '@/utils/storageAlert'
 import { validateAcceptance, type AcceptFormItem } from '@/utils/access'
 
 // 各类活动的计费费率（元/分钟）
@@ -115,12 +115,35 @@ export const useKitchenStore = defineStore('kitchen', {
       }
       return out.sort((a, b) => b.overdueHours - a.overdueHours)
     },
-    /** 已超时（预计取走时间后超过阈值）或已转待处理的在库食材 */
-    overdueStorageItems(): { item: StorageItem; booking: Booking; overdueHours: number }[] {
-      return this.activeStorageItems.filter(
-        (x: { item: StorageItem; overdueHours: number }) =>
-          x.item.state === 'pending' || x.overdueHours >= STORAGE_OVERTIME_HOURS
-      )
+    /**
+     * 真实超时：预计取走时间已过且超过阈值（不依赖 pending 状态）。
+     * 活动已取消但取走时间未到的食材不在此列。
+     */
+    overdueStorageItems(state): { item: StorageItem; booking: Booking; overdueHours: number }[] {
+      const out: { item: StorageItem; booking: Booking; overdueHours: number }[] = []
+      const now = Date.now()
+      for (const bk of state.bookings) {
+        for (const item of bk.storageItems) {
+          if (storageAlertKind(item, bk.status, now) === 'overdue') {
+            out.push({ item, booking: bk, overdueHours: hoursSince(item.expectedTakeAt, now) })
+          }
+        }
+      }
+      return out.sort((a, b) => b.overdueHours - a.overdueHours)
+    },
+    /** 活动取消后的滞留待处置食材（预计取走时间尚未到，不算超时，不显示负时长） */
+    canceledPendingStorage(state): { item: StorageItem; booking: Booking; remainHours: number }[] {
+      const out: { item: StorageItem; booking: Booking; remainHours: number }[] = []
+      const now = Date.now()
+      for (const bk of state.bookings) {
+        for (const item of bk.storageItems) {
+          if (storageAlertKind(item, bk.status, now) === 'canceled') {
+            out.push({ item, booking: bk, remainHours: -hoursSince(item.expectedTakeAt, now) })
+          }
+        }
+      }
+      // 距离取走时间最近（剩余最少）的排最前，便于优先处置
+      return out.sort((a, b) => a.remainHours - b.remainHours)
     },
     /** 某预约的暂存处置费合计（含豁免记录） */
     storageFeeOf(state) {
@@ -159,8 +182,9 @@ export const useKitchenStore = defineStore('kitchen', {
         for (const d of this.disputes as DepositDispute[]) {
           if (['open', 'mediating'].includes(d.status) && role === 'staff') n++
         }
-        // 超时食材待处置（管理员）
-        if (role === 'admin') n += this.overdueStorageItems.length
+        // 超时食材 + 活动取消滞留食材待处置（管理员）
+        if (role === 'admin')
+          n += this.overdueStorageItems.length + this.canceledPendingStorage.length
         // 申请人自己的预约待补款/待签收
         for (const b of this.bookings as Booking[]) {
           if (
