@@ -160,6 +160,12 @@ export interface Booking {
   // 限制
   restricted?: boolean
   restrictReason?: string
+  // 邻里投诉回溯：运行记录
+  ventilationLogs?: VentilationLog[]
+  patrolLogs?: PatrolLog[]
+  // 上次投诉回溯写入本预约的附加条件及确认记录
+  boundTerms?: ComplaintTerm[]
+  termAcks?: BookingTermAck[]
   createdAt: string
   timeline: TimelineEntry[]
 }
@@ -384,3 +390,95 @@ export interface EquipmentNotification {
   responseNote?: string
   respondedAt?: string
 }
+
+// ============ 邻里投诉回溯 ============
+// 投诉时的运行上下文快照
+export interface ComplaintContext {
+  cookingTypes: string[]
+  isFrying: boolean
+  peopleCount: number
+  ventilation: VentilationLog[] // 排风开启记录
+  patrols: PatrolLog[] // 管理员巡查记录
+  allocatedResourceIds: string[]
+  timeRange: string
+}
+
+// 排风开启记录
+export interface VentilationLog {
+  id: string
+  at: string
+  level: number // 档位 1-3
+  by: string // 记录人
+  note?: string
+}
+
+// 管理员现场巡查记录
+export interface PatrolLog {
+  id: string
+  at: string
+  by: string
+  finding: string // 现场情况（油烟/噪声/人数/秩序）
+  action?: string // 现场处置
+}
+
+export type ComplaintReviewStatus = 'open' | 'reviewed'
+export interface ComplaintReview {
+  id: string
+  code: string // TS-YYYYMMDD-###
+  incidentId?: string // 关联投诉事件
+  bookingId: string // 被投诉的预约
+  applicantId: string
+  complaintType: 'smoke' | 'noise' | 'mixed' // 油烟/噪声/混合
+  summary: string // 投诉内容摘要
+  neighborFrom?: string // 投诉来源（楼栋/电话）
+  reportedAt: string
+  context: ComplaintContext // 投诉当时的回溯上下文
+  status: ComplaintReviewStatus
+  // 回溯结论
+  conclusion?: string
+  reviewedBy?: string
+  reviewedAt?: string
+  // 针对本次问题的后续措施
+  measures: ComplaintMeasure[]
+  // 写入“下一次预约确认”的条件（按申请人绑定）
+  nextBookingTerms: ComplaintTerm[]
+}
+
+export type ComplaintMeasureType =
+  | 'ban-frying' // 后续限制油炸
+  | 'shorten-hours' // 缩短时段
+  | 'add-patrol' // 增加管理员现场巡查
+  | 'add-ventilation' // 加强排风（全程高档）
+  | 'limit-people' // 限制人数
+  | 'strengthen-clean' // 加强清洁要求
+
+export interface ComplaintMeasure {
+  type: ComplaintMeasureType
+  detail: string // 具体要求
+}
+
+// 下一次预约必须确认的附加条件
+export interface ComplaintTerm {
+  id: string
+  sourceReviewCode: string
+  category: 'ventilation' | 'cleaning' | 'people' | 'frying' | 'hours' | 'patrol'
+  label: string // 如：全程开启排风高档
+  surcharge: number // 押金加收（元）
+  // 违反该条件的扣费（验收时勾选违约）
+  penalty: number
+  requiredPatrols?: number // 需管理员现场巡查次数
+}
+
+// 预约上的条件确认记录（下一次预约确认页勾选）
+export interface BookingTermAck {
+  termId: string
+  sourceReviewCode: string
+  label: string
+  surcharge: number
+  penalty: number
+  acked: boolean
+  ackedAt?: string
+  violated: boolean // 验收时是否被认定违约
+  violateNote?: string
+}
+

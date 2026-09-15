@@ -373,6 +373,24 @@ export const seedBookings: Booking[] = [
     allocatedResourceIds: ['r-s1', 'r-s3', 'r-o1', 'r-x1', 'r-t1', 'r-g1'],
     storageItems: [],
     incidentIds: ['i-1', 'i-2'],
+    // 邻里投诉回溯：运行时排风与巡查记录
+    ventilationLogs: [
+      { id: 'v-1', at: '2026-09-14 09:05', level: 2, by: '张管理', note: '开场排风 2 档' },
+      { id: 'v-2', at: '2026-09-14 09:43', level: 3, by: '张管理', note: '油烟报警后调至 3 档并加开窗户' }
+    ],
+    patrolLogs: [
+      { id: 'pl-1', at: '2026-09-14 09:20', by: '张管理', finding: '四个灶台同时煸炒，人数 25（含家长围观），油烟偏大', action: '要求两灶轮换、围观家长在外等候' },
+      { id: 'pl-2', at: '2026-09-14 09:45', by: '张管理', finding: '排风 3 档后油烟下降，现场秩序正常', action: '持续观察' }
+    ],
+    // 上次投诉回溯（09-08 课堂）写入本次预约的条件，负责人已在确认页勾选
+    boundTerms: [
+      { id: 'ct-1', sourceReviewCode: 'TS-20260908-01', category: 'ventilation', label: '烹饪全程开启排风机高档，油烟大的菜品错峰操作', surcharge: 0, penalty: 100 },
+      { id: 'ct-2', sourceReviewCode: 'TS-20260908-01', category: 'patrol', label: '使用期间管理员至少现场巡查 2 次，负责人配合签到', surcharge: 0, penalty: 60, requiredPatrols: 2 }
+    ],
+    termAcks: [
+      { termId: 'ct-1', sourceReviewCode: 'TS-20260908-01', label: '烹饪全程开启排风机高档，油烟大的菜品错峰操作', surcharge: 0, penalty: 100, acked: true, ackedAt: '2026-09-13 17:00', violated: true, violateNote: '09:20 巡查发现四个灶台同时煸炒、排风仅 2 档，09:43 才整改，认定违反排风要求' },
+      { termId: 'ct-2', sourceReviewCode: 'TS-20260908-01', label: '使用期间管理员至少现场巡查 2 次，负责人配合签到', surcharge: 0, penalty: 60, acked: true, ackedAt: '2026-09-13 17:00', violated: false }
+    ],
     foodSafetyAck: true,
     foodSafetyAckAt: '2026-09-13 16:00',
     createdAt: '2026-09-11 09:00',
@@ -866,5 +884,76 @@ export const seedEquipmentNotifications: import('@/types').EquipmentNotification
     sentBy: '系统',
     message: '您 09-16 商业试吃申请的烤箱设备中，1 号烤箱预计 3 天内无法使用；审批通过后将安排 2 号烤箱，请知悉，如需改期请联系管理员。',
     status: 'pending'
+  }
+]
+
+// ---------------- 邻里投诉回溯 ----------------
+export const seedComplaintReviews: import('@/types').ComplaintReview[] = [
+  // 历史：09-08 银发课堂油烟投诉，已回溯并给该组织（u-org1）下一次预约写入条件
+  {
+    id: 'cr-1',
+    code: 'TS-20260908-01',
+    bookingId: 'b-007',
+    applicantId: 'u-org1',
+    complaintType: 'smoke',
+    summary: '2 号楼有老人反映早餐课煎制食物时油烟味进入楼道。',
+    neighborFrom: '2号楼 201 电话',
+    reportedAt: '2026-09-08 09:20',
+    context: {
+      cookingTypes: ['蒸煮', '家常烹饪'],
+      isFrying: false,
+      peopleCount: 18,
+      timeRange: '2026-09-08 08:30-10:30',
+      allocatedResourceIds: ['r-s2', 'r-x1', 'r-t1', 'r-g1'],
+      ventilation: [
+        { id: 'sv-1', at: '2026-09-08 08:35', level: 1, by: '张管理', note: '排风 1 档（志愿者不会调档）' },
+        { id: 'sv-2', at: '2026-09-08 09:10', level: 3, by: '张管理', note: '投诉后调至 3 档' }
+      ],
+      patrols: [
+        { id: 'spl-1', at: '2026-09-08 09:05', by: '张管理', finding: '志愿者使用灶台不熟练，排风档位偏低', action: '现场教学调至高档' }
+      ]
+    },
+    status: 'reviewed',
+    conclusion: '排风开启不及时、现场缺少巡查引导，非恶意；对该组织后续课堂提出加强排风和增加巡查要求。',
+    reviewedBy: '孙社工',
+    reviewedAt: '2026-09-08 15:00',
+    measures: [
+      { type: 'add-ventilation', detail: '后续课堂烹饪全程排风高档，油烟菜品错峰' },
+      { type: 'add-patrol', detail: '管理员在开场与烹饪高峰各巡查 1 次（共 ≥2 次）' }
+    ],
+    nextBookingTerms: [
+      { id: 'ct-1', sourceReviewCode: 'TS-20260908-01', category: 'ventilation', label: '烹饪全程开启排风机高档，油烟大的菜品错峰操作', surcharge: 0, penalty: 100 },
+      { id: 'ct-2', sourceReviewCode: 'TS-20260908-01', category: 'patrol', label: '使用期间管理员至少现场巡查 2 次，负责人配合签到', surcharge: 0, penalty: 60, requiredPatrols: 2 }
+    ]
+  },
+  // 当前：09-14 公益课堂油烟+哮喘老人投诉，待社区工作人员回溯
+  {
+    id: 'cr-2',
+    code: 'TS-20260914-01',
+    incidentId: 'i-2',
+    bookingId: 'b-003',
+    applicantId: 'u-org1',
+    complaintType: 'mixed',
+    summary: '2 号楼 302 哮喘老人家庭反映辣椒炒肉油烟与儿童喧闹噪声，要求控制影响。',
+    neighborFrom: '2号楼 302（物业转来）',
+    reportedAt: '2026-09-14 09:55',
+    context: {
+      cookingTypes: ['家常烹饪'],
+      isFrying: false,
+      peopleCount: 20,
+      timeRange: '2026-09-14 09:00-12:00',
+      allocatedResourceIds: ['r-s1', 'r-s3', 'r-o1', 'r-x1', 'r-t1', 'r-g1'],
+      ventilation: [
+        { id: 'sv-3', at: '2026-09-14 09:05', level: 2, by: '张管理', note: '开场排风 2 档' },
+        { id: 'sv-4', at: '2026-09-14 09:43', level: 3, by: '张管理', note: '油烟报警后调至 3 档并开窗' }
+      ],
+      patrols: [
+        { id: 'spl-2', at: '2026-09-14 09:20', by: '张管理', finding: '四灶同炒，含家长围观约 25 人，油烟与噪声偏大', action: '要求两灶轮换、围观者外候' },
+        { id: 'spl-3', at: '2026-09-14 09:45', by: '张管理', finding: '排风 3 档后油烟下降', action: '持续观察' }
+      ]
+    },
+    status: 'open',
+    measures: [],
+    nextBookingTerms: []
   }
 ]

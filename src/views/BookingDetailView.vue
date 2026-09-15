@@ -27,6 +27,8 @@ import IncidentCard from '@/components/IncidentCard.vue'
 import AcceptanceForm from '@/components/AcceptanceForm.vue'
 import StorageItemCard from '@/components/StorageItemCard.vue'
 import DamageReportCard from '@/components/DamageReportCard.vue'
+import ComplaintReviewCard from '@/components/ComplaintReviewCard.vue'
+import TermAckCard from '@/components/TermAckCard.vue'
 import { canViewBooking } from '@/utils/access'
 import { storageAlertKind } from '@/utils/storageAlert'
 import type { OnSiteCheck } from '@/types'
@@ -117,6 +119,31 @@ const mf = reactive({ outcome: 'adjusted' as 'upheld' | 'adjusted' | 'rejected',
 
 const showPublicity = ref(false)
 const pf = reactive({ title: '', summary: '', board: true })
+const showRunLog = ref(false)
+const rl = reactive({ kind: 'ventilation' as 'ventilation' | 'patrol', level: 3, note: '', finding: '', action: '' })
+
+function openRunLog() {
+  rl.kind = 'ventilation'
+  rl.level = 3
+  rl.note = ''
+  rl.finding = ''
+  rl.action = ''
+  showRunLog.value = true
+}
+function saveRunLog() {
+  if (!b.value) return
+  if (rl.kind === 'ventilation') {
+    kitchen.addVentilationLog(b.value, Number(rl.level), rl.note, me.value.name)
+  } else {
+    if (!rl.finding.trim()) {
+      alert('请填写巡查发现')
+      return
+    }
+    kitchen.addPatrolLog(b.value, rl.finding.trim(), rl.action.trim(), me.value.name)
+  }
+  showRunLog.value = false
+}
+
 const restrictNote = ref('')
 
 // ---------- 设备损坏验收 ----------
@@ -137,6 +164,7 @@ const dmgErr = ref('')
 
 const damageReports = computed(() => (b.value ? kitchen.damageReportsOf(b.value.id) : []))
 const equipmentNotices = computed(() => (b.value ? kitchen.notificationsOfBooking(b.value.id) : []))
+const complaintReviews = computed(() => (b.value ? kitchen.complaintReviewsOf(b.value.id) : []))
 
 function openDamage() {
   dmg.kind = 'damage'
@@ -450,6 +478,9 @@ function toggleRestrict() {
           </div>
         </div>
 
+        <!-- 上次投诉整改条件：下一次预约确认 -->
+        <TermAckCard v-if="(b.termAcks?.length ?? 0) > 0" :booking="b" />
+
         <!-- 待审批操作 -->
         <div v-if="b.status === 'pending'" class="card action-card">
           <div class="card-title"><h2>📝 审批</h2></div>
@@ -515,6 +546,30 @@ function toggleRestrict() {
               <li v-for="c in CLEAN_REQUIREMENTS" :key="c.key" class="small">{{ c.icon }} {{ c.text }}</li>
             </ul>
           </details>
+        </div>
+
+        <!-- 运行记录：排风开启 / 管理员巡查（投诉回溯依据） -->
+        <div v-if="['checked', 'closing', 'completed'].includes(b.status)" class="card">
+          <div class="card-title">
+            <h2>💨 运行记录（排风 / 巡查）</h2>
+            <button v-if="isAdmin && b.status === 'checked'" class="btn sm" style="margin-left: auto" @click="openRunLog">➕ 记录排风/巡查</button>
+          </div>
+          <div class="run-grid">
+            <div>
+              <div class="tiny muted" style="margin-bottom: 4px">排风开启记录（{{ b.ventilationLogs?.length ?? 0 }}）</div>
+              <div v-for="v in b.ventilationLogs ?? []" :key="v.id" class="run-line small">
+                💨 {{ v.at }} {{ v.by }} · <b>{{ v.level }} 档</b><span v-if="v.note" class="muted">（{{ v.note }}）</span>
+              </div>
+              <div v-if="!(b.ventilationLogs?.length)" class="tiny muted">暂无记录</div>
+            </div>
+            <div>
+              <div class="tiny muted" style="margin-bottom: 4px">管理员现场巡查（{{ b.patrolLogs?.length ?? 0 }}）</div>
+              <div v-for="p in b.patrolLogs ?? []" :key="p.id" class="run-line small">
+                🗝️ {{ p.at }} {{ p.by }}：{{ p.finding }}<span v-if="p.action" class="muted">；处置 {{ p.action }}</span>
+              </div>
+              <div v-if="!(b.patrolLogs?.length)" class="tiny muted">暂无记录</div>
+            </div>
+          </div>
         </div>
 
         <!-- 食材暂存 -->
@@ -597,6 +652,23 @@ function toggleRestrict() {
               <span v-if="n.responseNote">（{{ n.responseNote }}）</span> · {{ n.respondedAt }}
             </div>
           </div>
+        </div>
+
+        <!-- 邻里投诉回溯 -->
+        <div v-if="['checked', 'closing', 'completed', 'canceled'].includes(b.status)" class="card">
+          <div class="card-title">
+            <h2>📞 邻里投诉回溯</h2>
+            <span v-if="complaintReviews.length" class="tag" :class="kitchen.openComplaintReviews.some((x) => x.bookingId === b!.id) ? 'red' : 'green'">
+              {{ complaintReviews.length }} 条回溯
+            </span>
+          </div>
+          <ComplaintReviewCard
+            v-for="cr in complaintReviews"
+            :key="cr.id"
+            :review="cr"
+            :booking="b"
+          />
+          <div v-if="!complaintReviews.length" class="small muted">本次使用无投诉回溯记录。</div>
         </div>
 
         <!-- 设备损坏验收 -->
@@ -884,6 +956,29 @@ function toggleRestrict() {
       </template>
     </BaseModal>
 
+    <BaseModal v-if="showRunLog" title="记录排风 / 现场巡查" @close="showRunLog = false">
+      <div class="modal-body">
+        <div class="seg" style="margin-bottom: 12px">
+          <button :class="{ on: rl.kind === 'ventilation' }" @click="rl.kind = 'ventilation'">💨 排风开启</button>
+          <button :class="{ on: rl.kind === 'patrol' }" @click="rl.kind = 'patrol'">🗝️ 管理员巡查</button>
+        </div>
+        <template v-if="rl.kind === 'ventilation'">
+          <div class="field"><label>排风档位</label>
+            <select v-model.number="rl.level"><option :value="1">1 档</option><option :value="2">2 档</option><option :value="3">3 档（最高）</option></select>
+          </div>
+          <div class="field"><label>备注</label><input v-model="rl.note" placeholder="如：油烟报警后调至最高档并开窗" /></div>
+        </template>
+        <template v-else>
+          <div class="field"><label>现场发现<span class="req">*</span></label><textarea v-model="rl.finding" placeholder="油烟/噪声/人数/秩序等现场情况"></textarea></div>
+          <div class="field"><label>现场处置</label><input v-model="rl.action" placeholder="如：要求两灶轮换、围观者外候" /></div>
+        </template>
+      </div>
+      <template #footer>
+        <button class="btn" @click="showRunLog = false">取消</button>
+        <button class="btn primary" @click="saveRunLog">保存记录</button>
+      </template>
+    </BaseModal>
+
     <BaseModal v-if="showDamage" title="登记设备损坏 / 器具遗失" wide @close="showDamage = false">
       <div class="modal-body">
         <div class="banner warn"><span>🔧</span><div class="bx">
@@ -975,6 +1070,9 @@ function toggleRestrict() {
 .notice-card { border-left: 4px solid var(--c-blue); }
 .notice-item { padding: 8px 10px; background: var(--c-blue-soft); border-radius: 7px; margin-bottom: 8px; }
 .notice-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.run-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.run-line { padding: 4px 0; border-bottom: 1px dashed var(--c-border); }
+@media (max-width: 800px) { .run-grid { grid-template-columns: 1fr; } }
 .forbidden {
   max-width: 620px; margin: 40px auto; text-align: center; padding: 36px 28px;
 }

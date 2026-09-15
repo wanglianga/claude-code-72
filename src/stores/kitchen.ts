@@ -3,6 +3,8 @@ import type {
   Acceptance,
   AcceptanceItem,
   Booking,
+  ComplaintMeasure,
+  ComplaintReview,
   DamageReport,
   DamageVerdict,
   DepositDispute,
@@ -12,6 +14,7 @@ import type {
   IncidentType,
   KitchenResource,
   OnSiteCheck,
+  PatrolLog,
   Photo,
   Publicity,
   RepairWorkOrder,
@@ -19,10 +22,12 @@ import type {
   StorageCategory,
   StorageDisposal,
   StorageDisposalAction,
-  StorageItem
+  StorageItem,
+  VentilationLog
 } from '@/types'
 import {
   seedBookings,
+  seedComplaintReviews,
   seedDamageReports,
   seedEquipmentNotifications,
   seedIncidents,
@@ -76,6 +81,7 @@ interface KitchenState {
   damageReports: DamageReport[]
   workOrders: RepairWorkOrder[]
   equipmentNotifications: EquipmentNotification[]
+  complaintReviews: ComplaintReview[]
   seq: number
 }
 
@@ -88,6 +94,7 @@ export const useKitchenStore = defineStore('kitchen', {
     damageReports: [],
     workOrders: [],
     equipmentNotifications: [],
+    complaintReviews: [],
     seq: 100
   }),
 
@@ -165,6 +172,36 @@ export const useKitchenStore = defineStore('kitchen', {
     },
     pendingNotificationCount(state) {
       return state.equipmentNotifications.filter((n) => n.status === 'pending').length
+    },
+
+    // ---------- 邻里投诉回溯 ----------
+    complaintReviewsOf(state) {
+      return (bookingId: string) =>
+        state.complaintReviews
+          .filter((c) => c.bookingId === bookingId)
+          .sort((a, b) => (a.reportedAt < b.reportedAt ? 1 : -1))
+    },
+    openComplaintReviews(state): ComplaintReview[] {
+      return state.complaintReviews.filter((c) => c.status === 'open')
+    },
+    /** 该申请人尚未在任何后续预约中确认过的条件（下一次预约必须携带） */
+    pendingTermsFor(state) {
+      return (applicantId: string) => {
+        const result: import('@/types').ComplaintTerm[] = []
+        for (const r of state.complaintReviews) {
+          if (r.applicantId !== applicantId || r.status !== 'reviewed') continue
+          for (const t of r.nextBookingTerms) {
+            const consumed = state.bookings.some(
+              (bk) =>
+                bk.applicantId === applicantId &&
+                (bk.boundTerms ?? []).some((bt) => bt.id === t.id) &&
+                bk.createdAt >= r.reviewedAt!
+            )
+            if (!consumed) result.push(t)
+          }
+        }
+        return result
+      }
     },
 
     // ---------- 食材暂存超时 ----------
@@ -247,6 +284,8 @@ export const useKitchenStore = defineStore('kitchen', {
         for (const d of this.disputes as DepositDispute[]) {
           if (['open', 'mediating'].includes(d.status) && role === 'staff') n++
         }
+        // 投诉回溯待办（社区工作人员）
+        if (role === 'staff') n += this.openComplaintReviews.length
         // 超时食材 + 活动取消滞留食材待处置（管理员）
         if (role === 'admin')
           n += this.overdueStorageItems.length + this.canceledPendingStorage.length
@@ -359,6 +398,7 @@ export const useKitchenStore = defineStore('kitchen', {
           this.damageReports = data.damageReports ?? []
           this.workOrders = data.workOrders ?? []
           this.equipmentNotifications = data.equipmentNotifications ?? []
+          this.complaintReviews = data.complaintReviews ?? []
           this.seq = data.seq ?? 100
         } catch {
           this.resetDemo()
@@ -378,6 +418,7 @@ export const useKitchenStore = defineStore('kitchen', {
           damageReports: this.damageReports,
           workOrders: this.workOrders,
           equipmentNotifications: this.equipmentNotifications,
+          complaintReviews: this.complaintReviews,
           seq: this.seq
         })
       )
@@ -389,6 +430,7 @@ export const useKitchenStore = defineStore('kitchen', {
       this.damageReports = JSON.parse(JSON.stringify(seedDamageReports))
       this.workOrders = JSON.parse(JSON.stringify(seedWorkOrders))
       this.equipmentNotifications = JSON.parse(JSON.stringify(seedEquipmentNotifications))
+      this.complaintReviews = JSON.parse(JSON.stringify(seedComplaintReviews))
       this.disputes = [
         {
           id: 'd-1',
@@ -467,6 +509,8 @@ export const useKitchenStore = defineStore('kitchen', {
         storageItems: [],
         incidentIds: [],
         foodSafetyAck: false,
+        boundTerms: [],
+        termAcks: [],
         createdAt: nowStr(),
         timeline: [
           {
@@ -476,6 +520,17 @@ export const useKitchenStore = defineStore('kitchen', {
             tone: 'brand'
           }
         ]
+      }
+      // 绑定该申请人尚未确认的投诉整改条件（写入“下一次预约确认”）
+      const pending = this.pendingTermsFor(input.applicantId)
+      if (pending.length) {
+        this.bindTermsToBooking(b, pending, '系统')
+        b.timeline.push({
+          at: nowStr(),
+          actor: '系统',
+          action: `上次邻里投诉回溯的 ${pending.length} 条整改要求已写入本次预约确认页（押金加收合计 ${pending.reduce((s, t) => s + t.surcharge, 0)} 元）`,
+          tone: 'amber'
+        })
       }
       this.bookings.unshift(b)
       this.persist()
@@ -502,7 +557,12 @@ export const useKitchenStore = defineStore('kitchen', {
       if (rule.approveRole !== approverRole)
         return { ok: false, msg: `${rule.label}须由${rule.approveRole === 'staff' ? '社区工作人员' : '厨房管理员'}审批` }
       if (!b.foodSafetyAck) return { ok: false, msg: '预约人尚未签署食品安全告知书' }
-      if (!b.depositFree && !b.depositPaid) return { ok: false, msg: '押金未缴纳' }
+      if (!b.depositFree && !b.depositPaid) return { ok: false, msg: '押金未缴纳（含投诉整改条件加收部分）' }
+      // 上次投诉回溯写入的条件必须由负责人逐条再次勾选确认
+      const acks = b.termAcks ?? []
+      if (acks.length && acks.some((a) => !a.acked)) {
+        return { ok: false, msg: `负责人尚未逐条确认投诉整改条件（${acks.filter((a) => !a.acked).length} 条待勾选）` }
+      }
       b.status = 'approved'
       b.approverId = approverName
       b.approveComment = comment || '同意'
@@ -1179,6 +1239,178 @@ export const useKitchenStore = defineStore('kitchen', {
       return n
     },
 
+    // ================= 邻里投诉回溯 =================
+    /** 记录排风开启 */
+    addVentilationLog(b: Booking, level: number, note: string, actor: string) {
+      const log: VentilationLog = { id: uid('v'), at: nowStr(), level, by: actor, note }
+      b.ventilationLogs = [...(b.ventilationLogs ?? []), log]
+      this.tl(b, `排风开启 ${level} 档${note ? '：' + note : ''}`, actor, 'blue')
+      this.persist()
+    },
+
+    /** 记录管理员现场巡查 */
+    addPatrolLog(b: Booking, finding: string, action: string, actor: string) {
+      const log: PatrolLog = { id: uid('pl'), at: nowStr(), by: actor, finding, action }
+      b.patrolLogs = [...(b.patrolLogs ?? []), log]
+      this.tl(b, `管理员现场巡查：${finding}${action ? '；处置：' + action : ''}`, actor, 'blue')
+      this.persist()
+    },
+
+    /** 新建投诉回溯（自动快照当时预约/烹饪/排风/人数/巡查） */
+    openComplaintReview(
+      bookingId: string,
+      data: { incidentId?: string; complaintType: ComplaintReview['complaintType']; summary: string; neighborFrom?: string },
+      actor: string
+    ): { ok: boolean; msg?: string; review?: ComplaintReview } {
+      const b = this.bookingById(bookingId)
+      if (!b) return { ok: false, msg: '预约不存在' }
+      if (!data.summary.trim()) return { ok: false, msg: '请填写投诉内容摘要' }
+      this.seq += 1
+      const code = `TS-${nowStr().slice(0, 10).replace(/-/g, '')}-${String(this.seq).padStart(3, '0')}`
+      const review: ComplaintReview = {
+        id: uid('cr'),
+        code,
+        incidentId: data.incidentId,
+        bookingId,
+        applicantId: b.applicantId,
+        complaintType: data.complaintType,
+        summary: data.summary.trim(),
+        neighborFrom: data.neighborFrom,
+        reportedAt: nowStr(),
+        context: {
+          cookingTypes: b.cookingTypes,
+          isFrying: b.isFrying,
+          peopleCount: b.peopleCount,
+          timeRange: `${b.date} ${b.startAt}-${b.endAt}`,
+          allocatedResourceIds: [...b.allocatedResourceIds],
+          ventilation: JSON.parse(JSON.stringify(b.ventilationLogs ?? [])),
+          patrols: JSON.parse(JSON.stringify(b.patrolLogs ?? []))
+        },
+        status: 'open',
+        measures: [],
+        nextBookingTerms: []
+      }
+      this.complaintReviews.push(review)
+      this.tl(b, `邻里投诉回溯立案 ${code}（${data.complaintType === 'smoke' ? '油烟' : data.complaintType === 'noise' ? '噪声' : '油烟+噪声'}）`, actor, 'red')
+      this.persist()
+      return { ok: true, review }
+    },
+
+    /** 社区工作人员完成回溯：措施 + 写入下一次预约确认的条件（押金加收） */
+    reviewComplaint(
+      reviewId: string,
+      data: {
+        conclusion: string
+        measures: ComplaintMeasure[]
+        terms: { category: import('@/types').ComplaintTerm['category']; label: string; surcharge: number; penalty: number; requiredPatrols?: number }[]
+      },
+      actor: string,
+      actorRole: string
+    ): { ok: boolean; msg?: string } {
+      if (actorRole !== 'staff') return { ok: false, msg: '仅社区工作人员可以出具投诉回溯结论' }
+      const r = this.complaintReviews.find((x) => x.id === reviewId)
+      if (!r) return { ok: false, msg: '回溯记录不存在' }
+      if (!data.conclusion.trim()) return { ok: false, msg: '请填写回溯结论' }
+      if (!data.measures.length) return { ok: false, msg: '请至少选择一项后续措施（限油炸/缩时段/加巡查等）' }
+      if (!data.terms.length) return { ok: false, msg: '请至少写入一条下一次预约确认条件' }
+
+      const terms: import('@/types').ComplaintTerm[] = data.terms.map((t, i) => ({
+        id: uid('ct') + '-' + i,
+        sourceReviewCode: r.code,
+        category: t.category,
+        label: t.label,
+        surcharge: Number(t.surcharge) || 0,
+        penalty: Number(t.penalty) || 0,
+        requiredPatrols: t.requiredPatrols
+      }))
+      r.conclusion = data.conclusion.trim()
+      r.measures = data.measures
+      r.nextBookingTerms = terms
+      r.status = 'reviewed'
+      r.reviewedBy = actor
+      r.reviewedAt = nowStr()
+
+      const b = this.bookingById(r.bookingId)
+      if (b) this.tl(b, `投诉回溯 ${r.code} 完成，${data.measures.length} 项措施、${terms.length} 条条件写入下一次预约确认`, actor, 'amber')
+
+      // 绑定到该申请人已创建的、回溯日之后的预约（待审批/已批准）
+      const upcoming = this.bookings.filter(
+        (bk) =>
+          bk.applicantId === r.applicantId &&
+          ['pending', 'approved'].includes(bk.status) &&
+          bk.date >= nowStr().slice(0, 10)
+      )
+      for (const ub of upcoming) this.bindTermsToBooking(ub, terms, actor)
+      this.persist()
+      return { ok: true }
+    },
+
+    /** 把投诉条件绑定到一次预约（押金加收 + 待确认） */
+    bindTermsToBooking(b: Booking, terms: import('@/types').ComplaintTerm[], actor: string) {
+      b.boundTerms = [...(b.boundTerms ?? [])]
+      b.termAcks = [...(b.termAcks ?? [])]
+      for (const t of terms) {
+        if (b.boundTerms.some((x) => x.id === t.id)) continue
+        b.boundTerms.push(t)
+        b.termAcks.push({
+          termId: t.id,
+          sourceReviewCode: t.sourceReviewCode,
+          label: t.label,
+          surcharge: t.surcharge,
+          penalty: t.penalty,
+          acked: false,
+          violated: false
+        })
+        if (t.surcharge > 0) {
+          b.depositRequired += t.surcharge
+          this.tl(b, `投诉回溯条件「${t.label}」押金加收 ${t.surcharge} 元`, actor, 'amber')
+        }
+      }
+    },
+
+    /** 负责人在下一次预约确认页逐条勾选确认 */
+    ackBookingTerms(b: Booking, actor: string): { ok: boolean; msg?: string } {
+      const acks = b.termAcks ?? []
+      if (!acks.length) return { ok: true }
+      if (acks.some((a) => !a.acked)) {
+        // 批量勾选入口：要求全部勾选
+        return { ok: false, msg: '请逐条勾选全部投诉整改条件后再确认' }
+      }
+      for (const a of acks) {
+        if (!a.ackedAt) a.ackedAt = nowStr()
+      }
+      this.tl(b, `负责人再次确认投诉回溯条件 ${acks.length} 条（含排风/清洁/人数要求）`, actor, 'green')
+      this.persist()
+      return { ok: true }
+    },
+    /** 勾选单条 */
+    toggleTermAck(b: Booking, termId: string, acked: boolean) {
+      const a = (b.termAcks ?? []).find((x) => x.termId === termId)
+      if (a) {
+        a.acked = acked
+        a.ackedAt = acked ? nowStr() : undefined
+        this.persist()
+      }
+    },
+
+    /** 验收时认定某条条件违约（违约金计入押金） */
+    markTermViolated(b: Booking, termId: string, violated: boolean, note: string, actor: string) {
+      const a = (b.termAcks ?? []).find((x) => x.termId === termId)
+      if (!a) return
+      a.violated = violated
+      a.violateNote = note || undefined
+      const term = (b.boundTerms ?? []).find((t) => t.id === termId)
+      this.tl(
+        b,
+        violated
+          ? `认定违反投诉整改条件「${a.label}」，违约金 ${term?.penalty ?? 0} 元`
+          : `撤销「${a.label}」违约认定`,
+        actor,
+        violated ? 'red' : 'green'
+      )
+      this.persist()
+    },
+
     /** 预约人对设备通知的应答 */
     respondEquipmentNotification(
       nid: string,
@@ -1262,6 +1494,14 @@ export const useKitchenStore = defineStore('kitchen', {
             reasons.push(`食材「${it.name}」待处理占位 ${days} 天 × ${STORAGE_FEES.pendingPerDay} 元 = ${fee} 元`)
             deduction += fee
           }
+        }
+      }
+
+      // 邻里投诉整改条件：违反确认条款的违约金
+      for (const a of b.termAcks ?? []) {
+        if (a.violated) {
+          reasons.push(`违反投诉整改条件「${a.label}」违约金 ${a.penalty} 元（${a.sourceReviewCode}）`)
+          deduction += a.penalty
         }
       }
 

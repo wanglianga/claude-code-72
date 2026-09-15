@@ -149,6 +149,24 @@ const greetings: Record<string, string> = {
       </table>
     </div>
 
+    <!-- 投诉回溯待办（社区工作人员） -->
+    <div v-if="role === 'staff' && kitchen.openComplaintReviews.length" class="card" style="border-left: 4px solid var(--c-purple)">
+      <div class="card-title">
+        <h2>📞 邻里投诉待回溯</h2>
+        <span class="tag red">{{ kitchen.openComplaintReviews.length }} 件</span>
+      </div>
+      <table class="data">
+        <tbody>
+          <tr v-for="cr in kitchen.openComplaintReviews" :key="cr.id" class="clickable" @click="push(`/booking/${cr.bookingId}`)">
+            <td><strong>{{ cr.summary }}</strong><div class="tiny muted">{{ kitchen.bookingById(cr.bookingId)?.title }}</div></td>
+            <td class="small">{{ cr.neighborFrom }}</td>
+            <td class="small">{{ cr.context.cookingTypes.join('、') }} · {{ cr.context.peopleCount }}人 · 排风{{ cr.context.ventilation.length }}条 · 巡查{{ cr.context.patrols.length }}条</td>
+            <td><a>去回溯 →</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- 设备损坏待定性（管理员） -->
     <div v-if="role === 'admin' && kitchen.openDamageReports.length" class="card" style="border-left: 4px solid var(--c-red)">
       <div class="card-title">

@@ -557,5 +557,113 @@ assert('同类设备全部停用时新建预约 → 拒绝并提示改期', crea
 const b006Notified = kitchen.equipmentNotifications.some((n) => n.bookingId === 'b-006' && n.resourceType === 'stove')
 assert('后续需要灶台的预约自动收到停用通知', b006Notified)
 
+// ================= G. 邻里投诉回溯 → 下次预约确认 → 押金规则 =================
+console.log('\n[G] 邻里投诉回溯：上下文/措施/下次条件/再勾选/违约入押')
+
+kitchen.resetDemo()
+
+// G0. 种子：cr-2 待回溯，回溯上下文快照完整
+const cr2 = kitchen.complaintReviews.find((c) => c.id === 'cr-2')!
+assert('存在待回溯投诉（油烟+噪声）', cr2.status === 'open' && cr2.complaintType === 'mixed')
+assert('回溯快照含烹饪类型', cr2.context.cookingTypes.includes('家常烹饪'))
+assert('回溯快照含活动人数 20', cr2.context.peopleCount === 20)
+assert('回溯快照含排风记录', cr2.context.ventilation.length === 2)
+assert('回溯快照含管理员巡查记录', cr2.context.patrols.length === 2)
+const b003 = kitchen.bookingById('b-003')!
+assert('运行记录与快照一致（排风2/巡查2）', (b003.ventilationLogs?.length ?? 0) === 2 && (b003.patrolLogs?.length ?? 0) === 2)
+
+// G1. 非社区工作人员不能出具回溯结论
+let rg = kitchen.reviewComplaint(
+  cr2.id,
+  { conclusion: 'x', measures: [{ type: 'ban-frying', detail: '限油炸' }], terms: [{ category: 'frying', label: '不得油炸', surcharge: 0, penalty: 100 }] },
+  '张管理', 'admin'
+)
+assert('管理员不能做投诉回溯 → 拒绝', rg.ok === false && /社区工作人员/.test(rg.msg ?? ''))
+
+// G2. 无措施/无条件被拒
+rg = kitchen.reviewComplaint(cr2.id, { conclusion: 'xx', measures: [], terms: [] }, '孙社工', 'staff')
+assert('无措施无条件 → 拒绝', rg.ok === false)
+
+// G3. 正式回溯：限制油炸 + 缩短时段 + 加巡查，写两条下次条件（含押金加收）
+rg = kitchen.reviewComplaint(
+  cr2.id,
+  {
+    conclusion: '多灶同炒、排风开启不及时叠加围观噪声；要求后续课堂限制油炸、缩短时段并加强巡查。',
+    measures: [
+      { type: 'ban-frying', detail: '后续课堂暂不安排油炸' },
+      { type: 'shorten-hours', detail: '缩短为 2 小时' },
+      { type: 'add-patrol', detail: '管理员巡查不少于 2 次' }
+    ],
+    terms: [
+      { category: 'frying', label: '下一次预约不得进行油炸操作', surcharge: 100, penalty: 150 },
+      { category: 'patrol', label: '使用期间配合管理员现场巡查至少 2 次', surcharge: 0, penalty: 60, requiredPatrols: 2 }
+    ]
+  },
+  '孙社工', 'staff'
+)
+assert('回溯结论提交成功', rg.ok === true)
+assert('回溯状态=已回溯', cr2.status === 'reviewed' && (cr2.nextBookingTerms?.length ?? 0) === 2)
+
+// G4. 该组织下一次新建预约自动绑定条件、押金加收
+const nextBooking = kitchen.createBooking({
+  applicantId: 'u-org1',
+  applicantKind: 'org',
+  orgName: '阳光公益服务中心',
+  contactName: '陈小明',
+  contactPhone: '138-0000-2001',
+  activityKind: 'charity-class',
+  title: '下一次公益课堂（投诉后）',
+  date: '2026-10-10',
+  startAt: '09:00',
+  endAt: '11:00',
+  peopleCount: 15,
+  cookingTypes: ['蒸煮'],
+  isFrying: false,
+  storageNeeded: false,
+  equipmentNeeds: ['stove', 'tableware'],
+  natureNote: '投诉整改后的课堂',
+  depositFree: true
+})
+assert('下一次预约创建成功', nextBooking.ok === true)
+const nb = kitchen.bookingById(nextBooking.id!)!
+assert('自动绑定 2 条投诉条件', (nb.boundTerms?.length ?? 0) === 2)
+assert('待确认 2 条', (nb.termAcks?.filter((a) => !a.acked).length ?? 0) === 2)
+assert('条件押金加收 100 已计入押金基数（免押基础0+加收100）', nb.depositRequired === 100, `deposit=${nb.depositRequired}`)
+
+// G5. 未逐条确认时审批被拦截
+// 公益活动由 staff 审批；先补齐告知（免押无需缴押金）
+kitchen.ackFoodSafety(nb, '陈小明')
+let ra = kitchen.approve(nb, 'staff', '孙社工', '待确认条件')
+assert('未勾选投诉条件时审批 → 拒绝', ra.ok === false && /整改条件/.test(ra.msg ?? ''))
+
+// G6. 负责人逐条勾选后可审批
+for (const a of nb.termAcks ?? []) kitchen.toggleTermAck(nb, a.termId, true)
+const ackR = kitchen.ackBookingTerms(nb, '陈小明')
+assert('条件确认成功', ackR.ok === true)
+ra = kitchen.approve(nb, 'staff', '孙社工', '条件已确认')
+assert('全部确认后审批通过', ra.ok === true && nb.status === 'approved')
+
+// G7. 使用结束验收时认定违反「禁油炸」→ 违约金进入押金试算
+// 直接走验收：七项全合格 + 违约条款
+kitchen.allocate(nb, nb.equipmentNeeds.flatMap((t) => kitchen.resources.filter((r) => r.type === t && r.status === 'ok').slice(0, 1).map((r) => r.id)))
+kitchen.passPreCheck(nb, '张管理', { identityOk: true, healthPromise: true, storageOk: true, equipmentOk: true, photos: [] })
+kitchen.finishUsing(nb, '陈小明')
+const fryingAck = nb.termAcks!.find((a) => a.label.includes('油炸'))!
+kitchen.markTermViolated(nb, fryingAck.termId, true, '现场发现使用起酥油进行油炸操作', '张管理')
+const preview = kitchen.computeDeposit(nb, {
+  overtimeMinutes: 0,
+  cleaningExtraMinutes: 0,
+  items: emptyAcceptanceItems().map((i) => ({ ...i, result: 'pass' as const }))
+})
+assert('违约条款进入押金试算（违约金 150）', preview.deduction >= 150 && preview.reasons.some((x) => x.includes('违约金')), JSON.stringify(preview.reasons))
+
+// G8. 已消费的条件不再绑定到再下一次预约（pendingTermsFor 已消费）
+const pendingAfter = kitchen.pendingTermsFor('u-org1')
+assert('条件被一次后续预约消费后不再重复绑定', pendingAfter.length === 0, `left=${pendingAfter.length}`)
+
+// G9. 种子 b-003 上一次条件确认记录（ct-1 已认定违约 100）进入验收试算
+const seedAckViolated = (b003.termAcks ?? []).filter((a) => a.violated)
+assert('种子课堂存在 1 条已认定违约的历史条件确认', seedAckViolated.length === 1 && seedAckViolated[0].penalty === 100)
+
 console.log(`\n========== 结果：${pass} 通过，${fail} 失败 ==========`)
 if (fail > 0) process.exit(1)

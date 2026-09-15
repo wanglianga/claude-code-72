@@ -195,3 +195,65 @@ export const DAMAGE_KIND_META = {
 
 // 现场确认三项全部通过，管理员才能给出扣费/自然损耗的最终结论
 export const ONSITE_REQUIRED = ['确认本次使用人在场认可', '上次巡检时设备正常', '现场确认发生于本次使用'] as const
+
+// ---------------- 邻里投诉回溯 ----------------
+export const COMPLAINT_MEASURE_META: Record<
+  string,
+  { label: string; icon: string; termCategory: 'ventilation' | 'cleaning' | 'people' | 'frying' | 'hours' | 'patrol'; defaultTerm: string; defaultSurcharge: number; defaultPenalty: number }
+> = {
+  'ban-frying': {
+    label: '后续限制油炸',
+    icon: '🍳',
+    termCategory: 'frying',
+    defaultTerm: '下一次预约不得进行油炸操作（如需油炸须单独申请）',
+    defaultSurcharge: 100,
+    defaultPenalty: 150
+  },
+  'shorten-hours': {
+    label: '缩短使用时段',
+    icon: '⏰',
+    termCategory: 'hours',
+    defaultTerm: '下一次预约使用时长不超过 2 小时，结束后立即清场',
+    defaultSurcharge: 50,
+    defaultPenalty: 80
+  },
+  'add-patrol': {
+    label: '增加管理员现场巡查',
+    icon: '🗝️',
+    termCategory: 'patrol',
+    defaultTerm: '使用期间管理员至少现场巡查 2 次，负责人须配合签到',
+    defaultSurcharge: 0,
+    defaultPenalty: 60
+  },
+  'add-ventilation': {
+    label: '全程加强排风',
+    icon: '💨',
+    termCategory: 'ventilation',
+    defaultTerm: '烹饪全程开启排风机高档，油烟大的菜品错峰操作',
+    defaultSurcharge: 50,
+    defaultPenalty: 100
+  },
+  'limit-people': {
+    label: '限制活动人数',
+    icon: '👥',
+    termCategory: 'people',
+    defaultTerm: '下一次预约人数不得超过 15 人，临时加人须提前报备',
+    defaultSurcharge: 50,
+    defaultPenalty: 80
+  },
+  'strengthen-clean': {
+    label: '加强清洁要求',
+    icon: '🧹',
+    termCategory: 'cleaning',
+    defaultTerm: '结束后自行完成深度初清（烟机/地面/排水沟），保洁复检合格方可退押',
+    defaultSurcharge: 50,
+    defaultPenalty: 100
+  }
+}
+
+export const COMPLAINT_TYPE_META = {
+  smoke: { label: '油烟投诉', icon: '💨' },
+  noise: { label: '噪声投诉', icon: '📢' },
+  mixed: { label: '油烟+噪声', icon: '🌀' }
+} as const
+
