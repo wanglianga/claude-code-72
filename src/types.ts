@@ -46,6 +46,9 @@ export interface KitchenResource {
   status: 'ok' | 'repairing' // 正常 / 维修中
   wear: number // 累计损耗度 0-100
   note?: string
+  lastInspectionAt?: string // 上次巡检时间
+  lastInspectionBy?: string
+  lastInspectionResult?: string // 巡检结论
 }
 
 // 食材暂存类别（肉类/海鲜有强制食品安全处置要求）
@@ -294,4 +297,90 @@ export interface NoticeDoc {
   title: string
   content: string
   version: string
+}
+
+// ============ 设备损坏验收 ============
+// investigating 调查中（未定性，押金暂挂，验收拦截）
+// wear 自然损耗（使用人不赔，社区承担）
+// charge 维修扣费（使用人承担，从押金扣）
+// resolved 已处理完成（工单关闭）
+export type DamageVerdict = 'investigating' | 'wear' | 'charge' | 'resolved'
+export type DamageKind = 'damage' | 'loss' // 损坏 / 遗失
+
+// 现场确认（管理员逐项核验）
+export interface OnSiteCheck {
+  userIdMatch: boolean // 确认本次使用人在场并认可
+  beforeNormal: boolean // 上次巡检/使用前核验时设备正常
+  onSiteConfirmed: boolean // 现场确认损坏/遗失发生于本次使用
+  note?: string
+}
+
+export interface DamageReport {
+  id: string
+  code: string // WS-YYYYMMDD-###
+  bookingId: string
+  resourceId?: string // 关联设备（遗失餐具等可无具体资产号）
+  resourceName: string
+  resourceType: ResourceType
+  kind: DamageKind // 损坏 / 遗失
+  title: string
+  detail: string
+  reportedBy: string
+  reportedAt: string
+  photos: Photo[] // 设备照片
+  lastInspectionAt?: string // 上次巡检时间（登记时快照）
+  lastInspectionResult?: string // 上次巡检结论
+  onSite: OnSiteCheck // 现场确认
+  verdict: DamageVerdict
+  decidedBy?: string
+  decidedAt?: string
+  decisionNote?: string
+  chargeAmount: number // 核定扣费（0 表示未定/自然损耗）
+  chargePosted: boolean // 费用是否已计入押金
+  workOrderId?: string
+}
+
+export type WorkOrderStatus = 'open' | 'repairing' | 'closed'
+export interface RepairWorkOrder {
+  id: string
+  code: string // WX-YYYYMMDD-###
+  damageReportId: string
+  bookingId: string
+  resourceId?: string
+  resourceName: string
+  resourceType: ResourceType
+  title: string
+  createdAt: string
+  createdBy: string
+  status: WorkOrderStatus
+  // 是否影响后续预约
+  affectsBookings: boolean
+  blockReason?: string
+  // 同类活动限制：全部该类设备停用时自动开启
+  blockSameKind: boolean
+  estimatedRepairDays: number
+  repairCost: number // 维修/重置成本（核定扣费依据）
+  handlerId?: string
+  handleNote?: string
+  closedAt?: string
+  timeline: TimelineEntry[]
+}
+
+// 受影响预约人的通知
+export type EquipmentNoticeStatus = 'pending' | 'responded' | 'closed'
+export interface EquipmentNotification {
+  id: string
+  workOrderId?: string
+  resourceType: ResourceType
+  bookingId: string // 被通知的预约
+  applicantId: string
+  channel: '站内' | '电话' | '短信'
+  sentAt: string
+  sentBy: string
+  message: string
+  status: EquipmentNoticeStatus
+  // 预约人应答：reschedule 改期 / change-equipment 换设备 / cancel 取消
+  response?: 'reschedule' | 'change-equipment' | 'cancel'
+  responseNote?: string
+  respondedAt?: string
 }

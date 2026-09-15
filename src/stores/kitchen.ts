@@ -3,23 +3,36 @@ import type {
   Acceptance,
   AcceptanceItem,
   Booking,
+  DamageReport,
+  DamageVerdict,
   DepositDispute,
+  EquipmentNotification,
   Incident,
   IncidentOwner,
   IncidentType,
   KitchenResource,
+  OnSiteCheck,
   Photo,
   Publicity,
+  RepairWorkOrder,
   ResourceType,
   StorageCategory,
   StorageDisposal,
   StorageDisposalAction,
   StorageItem
 } from '@/types'
-import { seedBookings, seedIncidents, seedResources } from '@/seed'
+import {
+  seedBookings,
+  seedDamageReports,
+  seedEquipmentNotifications,
+  seedIncidents,
+  seedResources,
+  seedWorkOrders
+} from '@/seed'
 import {
   ACTIVITY_RULES,
   MEAT_SEAFOOD_RULE,
+  RESOURCE_META,
   STORAGE_FEES
 } from '@/rules'
 import { hoursSince, nowStr, parseDateTime, uid } from '@/utils/format'
@@ -60,6 +73,9 @@ interface KitchenState {
   incidents: Incident[]
   resources: KitchenResource[]
   disputes: DepositDispute[]
+  damageReports: DamageReport[]
+  workOrders: RepairWorkOrder[]
+  equipmentNotifications: EquipmentNotification[]
   seq: number
 }
 
@@ -69,6 +85,9 @@ export const useKitchenStore = defineStore('kitchen', {
     incidents: [],
     resources: [],
     disputes: [],
+    damageReports: [],
+    workOrders: [],
+    equipmentNotifications: [],
     seq: 100
   }),
 
@@ -100,6 +119,52 @@ export const useKitchenStore = defineStore('kitchen', {
     },
     repairingResources(state): KitchenResource[] {
       return state.resources.filter((r) => r.status === 'repairing')
+    },
+
+    // ---------- 设备损坏验收 / 维修工单 ----------
+    damageReportsOf(state) {
+      return (bookingId: string) => state.damageReports.filter((d) => d.bookingId === bookingId)
+    },
+    workOrderById(state) {
+      return (id?: string) => state.workOrders.find((w) => w.id === id)
+    },
+    openDamageReports(state): DamageReport[] {
+      // 调查中（未定性）或已定性但工单未关闭
+      return state.damageReports.filter((d) => d.verdict === 'investigating')
+    },
+    openWorkOrders(state): RepairWorkOrder[] {
+      return state.workOrders.filter((w) => w.status !== 'closed')
+    },
+    /** 该预约是否存在未结案的设备损坏（验收前必须定性） */
+    hasUnresolvedDamage(state) {
+      return (bookingId: string) =>
+        state.damageReports.some((d) => d.bookingId === bookingId && d.verdict === 'investigating')
+    },
+    /** 该类设备是否存在「停用并影响后续预约」的工单（自动限制同类活动） */
+    typeBlockedByWorkOrder(state) {
+      return (type: ResourceType) =>
+        state.workOrders.some(
+          (w) => w.resourceType === type && w.status !== 'closed' && w.affectsBookings
+        )
+    },
+    /** 某类设备是否还有可分配的正常设备 */
+    hasAvailableOfType(state) {
+      return (type: ResourceType) => state.resources.some((r) => r.type === type && r.status === 'ok')
+    },
+    notificationsOfBooking(state) {
+      return (bookingId: string) =>
+        state.equipmentNotifications
+          .filter((n) => n.bookingId === bookingId)
+          .sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1))
+    },
+    myEquipmentNotifications(state) {
+      return (userId: string) =>
+        state.equipmentNotifications
+          .filter((n) => n.applicantId === userId && n.status !== 'closed')
+          .sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1))
+    },
+    pendingNotificationCount(state) {
+      return state.equipmentNotifications.filter((n) => n.status === 'pending').length
     },
 
     // ---------- 食材暂存超时 ----------
@@ -185,6 +250,12 @@ export const useKitchenStore = defineStore('kitchen', {
         // 超时食材 + 活动取消滞留食材待处置（管理员）
         if (role === 'admin')
           n += this.overdueStorageItems.length + this.canceledPendingStorage.length
+        // 管理员：待定性的设备损坏报告
+        if (role === 'admin') n += this.openDamageReports.length
+        // 维修：未关闭工单
+        if (role === 'repair') n += this.openWorkOrders.length
+        // 预约人：待应答的设备停用通知
+        if (role === 'resident') n += this.equipmentNotifications.filter((x) => x.applicantId === userId && x.status === 'pending').length
         // 申请人自己的预约待补款/待签收
         for (const b of this.bookings as Booking[]) {
           if (
@@ -285,6 +356,9 @@ export const useKitchenStore = defineStore('kitchen', {
           this.incidents = data.incidents ?? []
           this.resources = data.resources ?? []
           this.disputes = data.disputes ?? []
+          this.damageReports = data.damageReports ?? []
+          this.workOrders = data.workOrders ?? []
+          this.equipmentNotifications = data.equipmentNotifications ?? []
           this.seq = data.seq ?? 100
         } catch {
           this.resetDemo()
@@ -301,6 +375,9 @@ export const useKitchenStore = defineStore('kitchen', {
           incidents: this.incidents,
           resources: this.resources,
           disputes: this.disputes,
+          damageReports: this.damageReports,
+          workOrders: this.workOrders,
+          equipmentNotifications: this.equipmentNotifications,
           seq: this.seq
         })
       )
@@ -309,6 +386,9 @@ export const useKitchenStore = defineStore('kitchen', {
       this.bookings = JSON.parse(JSON.stringify(seedBookings))
       this.incidents = JSON.parse(JSON.stringify(seedIncidents))
       this.resources = JSON.parse(JSON.stringify(seedResources))
+      this.damageReports = JSON.parse(JSON.stringify(seedDamageReports))
+      this.workOrders = JSON.parse(JSON.stringify(seedWorkOrders))
+      this.equipmentNotifications = JSON.parse(JSON.stringify(seedEquipmentNotifications))
       this.disputes = [
         {
           id: 'd-1',
@@ -347,6 +427,16 @@ export const useKitchenStore = defineStore('kitchen', {
         return { ok: false, msg: `${rule.label}单次最长 ${rule.maxHours} 小时，请调整时段` }
       if (input.peopleCount < 1) return { ok: false, msg: '使用人数至少 1 人' }
       if (input.equipmentNeeds.length === 0) return { ok: false, msg: '请至少选择一项设备需求' }
+      // 同类设备全部停用时自动限制该类活动预约
+      const blockedType = input.equipmentNeeds.find(
+        (t) => this.workOrders.some((w) => w.resourceType === t && w.blockSameKind && w.status !== 'closed')
+      )
+      if (blockedType) {
+        return {
+          ok: false,
+          msg: `${RESOURCE_META[blockedType].label}因设备维修已自动暂停同类活动预约，请改期或联系社区工作人员`
+        }
+      }
       const depositFree = rule.depositFreeEligible && input.depositFree
       this.seq += 1
       const b: Booking = {
@@ -808,6 +898,329 @@ export const useKitchenStore = defineStore('kitchen', {
       this.persist()
     },
 
+    /** 记录设备巡检（作为下次损坏判定的“上次巡检”基线） */
+    recordInspection(r: KitchenResource, result: string, actor: string) {
+      r.lastInspectionAt = nowStr()
+      r.lastInspectionBy = actor
+      r.lastInspectionResult = result
+      this.persist()
+    },
+
+    // ================= 设备损坏验收 =================
+    /**
+     * 登记设备损坏/遗失：关联使用人(预约)、设备照片、上次巡检快照、现场确认；
+     * 同步建立维修工单、停用设备并自动通知受影响的下一位预约人。
+     */
+    registerDamage(
+      bookingId: string,
+      data: {
+        resourceId?: string
+        resourceName: string
+        resourceType: ResourceType
+        kind: 'damage' | 'loss'
+        title: string
+        detail: string
+        photos: Photo[]
+        onSite: OnSiteCheck
+        affectsBookings: boolean
+        estimatedRepairDays: number
+        repairCost: number
+      },
+      actor: string
+    ): { ok: boolean; msg?: string; report?: DamageReport } {
+      const b = this.bookingById(bookingId)
+      if (!b) return { ok: false, msg: '预约不存在' }
+      if (data.photos.length === 0) return { ok: false, msg: '请上传设备/器具照片后再登记' }
+      if (!data.title.trim() || !data.detail.trim()) return { ok: false, msg: '请填写损坏/遗失情况描述' }
+      const resource = data.resourceId ? this.resources.find((r) => r.id === data.resourceId) : undefined
+      this.seq += 1
+      const dateCode = nowStr().slice(0, 10).replace(/-/g, '')
+      const report: DamageReport = {
+        id: uid('dr'),
+        code: `WS-${dateCode}-${String(this.seq).padStart(3, '0')}`,
+        bookingId,
+        resourceId: data.resourceId,
+        resourceName: data.resourceName,
+        resourceType: data.resourceType,
+        kind: data.kind,
+        title: data.title.trim(),
+        detail: data.detail.trim(),
+        reportedBy: actor,
+        reportedAt: nowStr(),
+        photos: data.photos,
+        lastInspectionAt: resource?.lastInspectionAt,
+        lastInspectionResult: resource?.lastInspectionResult,
+        onSite: data.onSite,
+        verdict: 'investigating',
+        chargeAmount: 0,
+        chargePosted: false
+      }
+      this.damageReports.push(report)
+
+      // 同步建立维修工单
+      const wo: RepairWorkOrder = {
+        id: uid('wo'),
+        code: `WX-${dateCode}-${String(this.seq).padStart(3, '0')}`,
+        damageReportId: report.id,
+        bookingId,
+        resourceId: data.resourceId,
+        resourceName: data.resourceName,
+        resourceType: data.resourceType,
+        title: (data.kind === 'loss' ? '器具遗失：' : '设备维修：') + data.title.trim(),
+        createdAt: nowStr(),
+        createdBy: actor,
+        status: 'open',
+        affectsBookings: data.affectsBookings,
+        blockSameKind: false,
+        estimatedRepairDays: data.estimatedRepairDays,
+        repairCost: data.repairCost,
+        timeline: [{ at: nowStr(), actor, action: '损坏验收登记，维修工单建立', tone: 'red' }]
+      }
+      this.workOrders.push(wo)
+      report.workOrderId = wo.id
+
+      // 设备停用与损耗
+      if (resource && data.kind === 'damage') {
+        resource.status = 'repairing'
+        resource.wear = Math.min(100, resource.wear + 25)
+        resource.note = data.title.trim()
+      }
+
+      this.tl(
+        b,
+        `设备损坏验收登记：${data.resourceName}「${data.title}」（报告 ${report.code}），等待责任定性`,
+        actor,
+        'red'
+      )
+
+      if (data.affectsBookings) {
+        this.refreshWorkOrderImpact(wo)
+        this.notifyNextBookings(wo)
+      }
+      this.persist()
+      return { ok: true, report }
+    },
+
+    /** 管理员定性：维修扣费 / 自然损耗 / 继续调查 */
+    decideDamage(
+      reportId: string,
+      verdict: Exclude<DamageVerdict, 'resolved'>,
+      data: { note: string; chargeAmount?: number },
+      actor: string,
+      actorRole: string
+    ): { ok: boolean; msg?: string } {
+      if (actorRole !== 'admin') return { ok: false, msg: '仅厨房管理员可以对损坏验收定性' }
+      const report = this.damageReports.find((d) => d.id === reportId)
+      if (!report) return { ok: false, msg: '损坏报告不存在' }
+      const b = this.bookingById(report.bookingId)
+      if (!b) return { ok: false, msg: '关联预约不存在' }
+
+      if (verdict === 'investigating') {
+        report.verdict = 'investigating'
+        report.decidedBy = actor
+        report.decisionNote = data.note
+        this.tl(b, `损坏报告 ${report.code} 继续调查：${data.note}`, actor, 'amber')
+        this.persist()
+        return { ok: true }
+      }
+
+      // 最终结论必须三项现场确认齐全
+      const on = report.onSite
+      if (!on.userIdMatch || !on.beforeNormal || !on.onSiteConfirmed) {
+        return { ok: false, msg: '现场确认三项（使用人认可 / 上次巡检正常 / 确认发生于本次使用）未全部完成，不能给出最终结论' }
+      }
+      if (!data.note.trim()) return { ok: false, msg: '请填写定性依据' }
+
+      const wo = this.workOrders.find((w) => w.id === report.workOrderId)
+
+      if (verdict === 'charge') {
+        const amount = Number(data.chargeAmount ?? wo?.repairCost ?? 0)
+        if (!amount || amount <= 0) return { ok: false, msg: '维修扣费必须填写大于 0 的金额' }
+        report.verdict = 'charge'
+        report.chargeAmount = amount
+        report.decidedBy = actor
+        report.decidedAt = nowStr()
+        report.decisionNote = data.note
+        report.chargePosted = true
+        if (wo) {
+          wo.status = wo.status === 'closed' ? 'closed' : 'repairing'
+          wo.repairCost = amount
+          wo.timeline.push({ at: nowStr(), actor, action: `定性为人为损坏，维修扣费 ${amount} 元同步计入押金`, tone: 'red' })
+        }
+        const reason = `${report.resourceName}${report.kind === 'loss' ? '遗失' : '损坏'}维修/重置费 ${amount} 元（${report.code}）`
+        if (b.depositFree) {
+          this.tl(b, `人为损坏扣费 ${amount} 元：公益活动免押，赔偿另行追偿`, actor, 'red')
+        } else if (b.depositResult && b.status === 'completed') {
+          b.depositResult.deduction = Math.min(b.depositRequired, b.depositResult.deduction + amount)
+          b.depositResult.reasons.push('验收后追加：' + reason)
+          this.tl(b, `损坏维修费 ${amount} 元追加计入押金`, actor, 'red')
+        } else {
+          if (!b.depositResult) {
+            b.depositResult = { decision: 'partial', deduction: 0, reasons: [], decidedBy: actor, decidedAt: nowStr() }
+          }
+          b.depositResult.deduction = Math.min(b.depositRequired, b.depositResult.deduction + amount)
+          if (!b.depositResult.reasons.includes(reason)) b.depositResult.reasons.push(reason)
+          this.tl(b, `定性人为损坏，维修扣费 ${amount} 元计入押金`, actor, 'red')
+        }
+      } else {
+        // 自然损耗：使用人不赔
+        report.verdict = 'wear'
+        report.chargeAmount = 0
+        report.chargePosted = true
+        report.decidedBy = actor
+        report.decidedAt = nowStr()
+        report.decisionNote = data.note
+        if (wo) {
+          wo.timeline.push({ at: nowStr(), actor, action: '定性为自然损耗，费用由社区维修预算承担，使用人不扣费', tone: 'green' })
+        }
+        this.tl(b, `${report.resourceName} 损坏定性为自然损耗，使用人不承担费用`, actor, 'green')
+      }
+      this.persist()
+      return { ok: true }
+    },
+
+    /** 更新/关闭维修工单，重新评估对后续预约的影响 */
+    updateWorkOrder(
+      woId: string,
+      data: {
+        affectsBookings?: boolean
+        blockReason?: string
+        estimatedRepairDays?: number
+        repairCost?: number
+        status?: RepairWorkOrder['status']
+        handleNote?: string
+      },
+      actor: string,
+      actorRole: string
+    ): { ok: boolean; msg?: string } {
+      if (actorRole !== 'repair' && actorRole !== 'admin')
+        return { ok: false, msg: '仅维修或管理员可以更新工单' }
+      const wo = this.workOrders.find((w) => w.id === woId)
+      if (!wo) return { ok: false, msg: '工单不存在' }
+      if (data.affectsBookings !== undefined) {
+        wo.affectsBookings = data.affectsBookings
+        if (data.affectsBookings && data.blockReason) wo.blockReason = data.blockReason
+      }
+      if (data.estimatedRepairDays !== undefined) wo.estimatedRepairDays = data.estimatedRepairDays
+      if (data.repairCost !== undefined) wo.repairCost = data.repairCost
+      if (data.status) wo.status = data.status
+      if (data.handleNote) {
+        wo.handlerId = actor
+        wo.handleNote = data.handleNote
+      }
+      wo.timeline.push({
+        at: nowStr(),
+        actor,
+        action:
+          `工单更新（${wo.status === 'closed' ? '已关闭' : wo.status === 'repairing' ? '维修中' : '待处理'}` +
+          `${data.affectsBookings !== undefined ? '，' + (data.affectsBookings ? '影响后续预约' : '不影响后续预约') : ''}）` +
+          (data.handleNote ? '：' + data.handleNote : ''),
+        tone: wo.status === 'closed' ? 'green' : 'amber'
+      })
+      // 设备随工单关闭恢复可用（需维修确认）
+      if (wo.status === 'closed') {
+        wo.closedAt = nowStr()
+        const r = wo.resourceId ? this.resources.find((x) => x.id === wo.resourceId) : undefined
+        if (r) {
+          r.status = 'ok'
+          r.note = `${wo.title}（已修复）`
+        }
+      }
+      this.refreshWorkOrderImpact(wo)
+      if (wo.affectsBookings && wo.status !== 'closed') this.notifyNextBookings(wo)
+      this.persist()
+      return { ok: true }
+    },
+
+    /** 重新计算“同类活动限制”：该类设备全部受影响停用时自动开启 */
+    refreshWorkOrderImpact(wo: RepairWorkOrder) {
+      const openBlocking = this.workOrders.some(
+        (w) => w.resourceType === wo.resourceType && w.status !== 'closed' && w.affectsBookings
+      )
+      wo.blockSameKind = openBlocking && !this.hasAvailableOfType(wo.resourceType)
+    },
+
+    /** 自动通知后续受影响预约人（去重） */
+    notifyNextBookings(wo: RepairWorkOrder) {
+      const candidates = this.bookings.filter(
+        (bk) =>
+          bk.id !== wo.bookingId &&
+          ['pending', 'approved', 'checked', 'closing'].includes(bk.status) &&
+          (bk.equipmentNeeds.includes(wo.resourceType) ||
+            bk.allocatedResourceIds.some((rid) => this.resources.find((r) => r.id === rid)?.type === wo.resourceType))
+      )
+      let n = 0
+      for (const bk of candidates) {
+        const exists = this.equipmentNotifications.some(
+          (x) => x.workOrderId === wo.id && x.bookingId === bk.id
+        )
+        if (exists) continue
+        const hasAlt = this.resources.some((r) => r.type === wo.resourceType && r.status === 'ok')
+        const msg =
+          `您 ${bk.date} ${bk.startAt}「${bk.title}」涉及的${wo.resourceType === 'oven' ? '烤箱' : '设备'}因${wo.resourceName}损坏停用` +
+          (hasAlt ? '，系统将为您改派同类型可用设备' : '，暂无可替换设备，请联系管理员改期') +
+          `（预计维修 ${wo.estimatedRepairDays} 天，工单 ${wo.code}）。`
+        this.equipmentNotifications.push({
+          id: uid('en'),
+          workOrderId: wo.id,
+          resourceType: wo.resourceType,
+          bookingId: bk.id,
+          applicantId: bk.applicantId,
+          channel: '站内',
+          sentAt: nowStr(),
+          sentBy: '系统',
+          message: msg,
+          status: 'pending'
+        })
+        wo.timeline.push({ at: nowStr(), actor: '系统', action: `自动通知下一位预约人「${bk.contactName}」改期或换设备`, tone: 'amber' })
+        this.tl(bk, `收到设备停用通知：${wo.resourceName}维修中，请应答改期或换设备`, '系统', 'amber')
+        n++
+      }
+      return n
+    },
+
+    /** 预约人对设备通知的应答 */
+    respondEquipmentNotification(
+      nid: string,
+      response: 'reschedule' | 'change-equipment' | 'cancel',
+      note: string,
+      actor: string
+    ): { ok: boolean; msg?: string } {
+      const n = this.equipmentNotifications.find((x) => x.id === nid)
+      if (!n) return { ok: false, msg: '通知不存在' }
+      const bk = this.bookingById(n.bookingId)
+      if (!bk) return { ok: false, msg: '预约不存在' }
+      n.status = 'responded'
+      n.response = response
+      n.responseNote = note
+      n.respondedAt = nowStr()
+      if (response === 'change-equipment') {
+        // 自动改派一台同类型可用设备（校验时段冲突）
+        const alt = this.resources.find(
+          (r) =>
+            r.type === n.resourceType &&
+            r.status === 'ok' &&
+            !this.resourceBusyAt(r.id, bk.date, bk.startAt, bk.endAt, bk.id)
+        )
+        if (alt) {
+          bk.allocatedResourceIds = bk.allocatedResourceIds.filter(
+            (rid) => this.resources.find((r) => r.id === rid)?.type !== n.resourceType
+          )
+          bk.allocatedResourceIds.push(alt.id)
+          this.tl(bk, `应答设备通知：同意换设备，已改派 ${alt.name}`, actor, 'green')
+        } else {
+          this.tl(bk, '应答换设备但暂无空闲同类设备，等待管理员协调', actor, 'amber')
+        }
+      } else if (response === 'reschedule') {
+        this.tl(bk, `应答设备通知：申请改期（${note || '待协商时间'}）`, actor, 'amber')
+      } else {
+        bk.status = 'canceled'
+        this.tl(bk, '应答设备通知：取消预约', actor, 'gray')
+      }
+      this.persist()
+      return { ok: true }
+    },
+
     // ================= 结束使用 → 逐项验收 → 押金 =================
     finishUsing(b: Booking, actor: string) {
       b.status = 'closing'
@@ -856,8 +1269,18 @@ export const useKitchenStore = defineStore('kitchen', {
         .filter((i) => i.bookingId === b.id && i.type === 'damage')
         .reduce((s, i) => s + (i.compensation ?? 0), 0)
       if (comp > 0) {
-        reasons.push(`设备损坏赔偿 ${comp} 元`)
+        reasons.push(`设备损坏赔偿 ${comp} 元（事件定损）`)
         deduction += comp
+      }
+      // 设备损坏验收报告的维修/重置扣费：
+      // 若已有「使用中事件」定损，以事件定损为准避免重复；否则累加定性为扣费的报告
+      if (comp === 0) {
+        for (const dr of this.damageReports.filter((d) => d.bookingId === b.id && d.verdict === 'charge')) {
+          if (dr.chargeAmount > 0) {
+            reasons.push(`${dr.resourceName}${dr.kind === 'loss' ? '遗失' : '损坏'}维修费 ${dr.chargeAmount} 元（${dr.code}）`)
+            deduction += dr.chargeAmount
+          }
+        }
       }
       if (fails.length) {
         const fee = fails.length * rate.failPenalty
@@ -919,6 +1342,16 @@ export const useKitchenStore = defineStore('kitchen', {
         return {
           ok: false,
           msg: `还有 ${unresolved.length} 项暂存食材未取走/未处置（${unresolved.map((i) => i.name).join('、')}），请先通知负责人并完成报废/取回/清空后再验收`
+        }
+      }
+      // 设备损坏验收未定性（继续调查）时不得完成验收
+      const investigating = this.damageReports.filter(
+        (d) => d.bookingId === b.id && d.verdict === 'investigating'
+      )
+      if (investigating.length) {
+        return {
+          ok: false,
+          msg: `设备损坏「${investigating.map((d) => d.resourceName).join('、')}」仍在调查，管理员须定性为维修扣费或自然损耗后再验收`
         }
       }
 

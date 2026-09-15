@@ -76,6 +76,13 @@ function toggleStatus(rid: string) {
           </div>
           <div class="small muted">📍 {{ r.location }}</div>
           <div v-if="r.note" class="tiny" style="color: var(--c-amber)">备注：{{ r.note }}</div>
+          <div v-if="r.lastInspectionAt" class="tiny muted">
+            上次巡检：{{ r.lastInspectionAt }}（{{ r.lastInspectionBy }}）
+            <div class="tiny muted">{{ r.lastInspectionResult }}</div>
+          </div>
+          <div v-if="kitchen.typeBlockedByWorkOrder(r.type) && r.status === 'repairing'" class="tag red" style="margin-top: 4px">
+            停用维修中 · 已通知/限制后续预约
+          </div>
           <div class="wear-row">
             <span class="tiny muted">累计损耗</span>
             <div class="bar-track" style="flex: 1"><div class="bar-fill" :style="{ width: r.wear + '%', background: wearColor(r.wear) }"></div></div>

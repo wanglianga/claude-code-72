@@ -59,12 +59,19 @@ function onFrying(v: boolean) {
 }
 
 const equipOptions = computed(() =>
-  (Object.keys(RESOURCE_META) as ResourceType[]).map((t) => ({
-    type: t,
-    ...RESOURCE_META[t],
-    total: kitchen.resources.filter((r) => r.type === t).length,
-    ok: kitchen.resources.filter((r) => r.type === t && r.status === 'ok').length
-  }))
+  (Object.keys(RESOURCE_META) as ResourceType[]).map((t) => {
+    const list = kitchen.resources.filter((r) => r.type === t)
+    const affectedWO = kitchen.workOrders.find((w) => w.resourceType === t && w.affectsBookings && w.status !== 'closed')
+    return {
+      type: t,
+      ...RESOURCE_META[t],
+      total: list.length,
+      ok: list.filter((r) => r.status === 'ok').length,
+      affected: !!affectedWO,
+      fullyBlocked: affectedWO?.blockSameKind ?? false,
+      affectedLabel: affectedWO ? (affectedWO.blockSameKind ? '同类活动暂停' : '部分设备停用') : ''
+    }
+  })
 )
 
 function submit() {
@@ -217,12 +224,15 @@ function submit() {
           v-for="o in equipOptions"
           :key="o.type"
           class="equip-item"
-          :class="{ on: form.equipmentNeeds.includes(o.type), disabled: o.ok === 0 }"
-          @click="o.ok > 0 && toggleEquip(o.type)"
+          :class="{ on: form.equipmentNeeds.includes(o.type), disabled: o.ok === 0 || o.fullyBlocked }"
+          @click="o.ok > 0 && !o.fullyBlocked && toggleEquip(o.type)"
         >
           <div style="font-size: 20px">{{ o.icon }}</div>
           <div><b>{{ o.label }}</b></div>
           <div class="tiny muted">可用 {{ o.ok }}/{{ o.total }}</div>
+          <div v-if="o.affected" class="tiny" :class="o.fullyBlocked ? 'red' : 'amber'">
+            {{ o.fullyBlocked ? '🚫 ' + o.affectedLabel : '⚠️ ' + o.affectedLabel }}
+          </div>
         </div>
       </div>
     </div>

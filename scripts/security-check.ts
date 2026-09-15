@@ -393,5 +393,169 @@ assert('真实超时列表时长全部 ≥2 小时（无负数）', overdueList.
 const meatballInOverdue = overdueList.some((x) => x.item.id === 'st-4')
 assert('b-006 炸肉丸(st-4) 出现在“真实超时”列表', meatballInOverdue === true)
 
+// ================= F. 设备损坏验收 + 维修工单 + 通知 + 同类限制 =================
+console.log('\n[F] 设备损坏验收：现场确认/三结论/押金工单同步/通知下一位/同类限制')
+
+kitchen.resetDemo()
+
+// F0. 种子场景：b-009 烤箱门损坏，报告调查中，1号烤箱维修中，下一位预约人已通知
+const dr2 = kitchen.damageReports.find((d) => d.id === 'dr-2')!
+const wo2 = kitchen.workOrderById('wo-2')!
+assert('种子存在烤箱门损坏报告（调查中）', dr2.verdict === 'investigating' && dr2.resourceId === 'r-o1')
+assert('种子工单影响后续预约且在维修中', wo2.affectsBookings === true && wo2.status === 'repairing')
+assert('1号烤箱因损坏停用', kitchen.resources.find((r) => r.id === 'r-o1')!.status === 'repairing')
+const en1 = kitchen.equipmentNotifications.find((n) => n.id === 'en-1')!
+assert('下一位预约人 b-004 已被自动通知换设备', en1.bookingId === 'b-004' && en1.response === 'change-equipment')
+const b004 = kitchen.bookingById('b-004')!
+assert('应答换设备后 b-004 已改派 2号烤箱(r-o2)', b004.allocatedResourceIds.includes('r-o2') && !b004.allocatedResourceIds.includes('r-o1'))
+const en2 = kitchen.equipmentNotifications.find((n) => n.id === 'en-2')!
+assert('b-005 商业试吃存在待应答通知', en2.status === 'pending' && en2.bookingId === 'b-005')
+
+// F1. 调查中不能完成验收
+const b009 = kitchen.bookingById('b-009')!
+let rf = kitchen.submitAcceptance(b009, '张管理', 'admin', {
+  items: emptyAcceptanceItems().map((i) => ({ ...i, result: 'pass' as const })),
+  overtimeMinutes: 0,
+  cleaningExtraMinutes: 0,
+  overallComment: '卫生合格但设备未定性'
+})
+assert('损坏调查中提交验收 → 拒绝', rf.ok === false && /调查|定性/.test(rf.msg ?? ''))
+assert('拒绝后状态仍为 closing', kitchen.bookingById('b-009')!.status === 'closing')
+
+// F2. 现场确认未齐全不能最终定性
+let rdmg = kitchen.decideDamage(
+  dr2.id, 'charge',
+  { note: '人为损坏', chargeAmount: 320 },
+  '张管理', 'admin'
+)
+// 种子 dr-2 的 onSiteConfirmed=false
+assert('现场确认三项不全时定性扣费 → 拒绝', rdmg.ok === false && /现场确认/.test(rdmg.msg ?? ''))
+
+// F3. 非管理员不能定性
+rdmg = kitchen.decideDamage(dr2.id, 'wear', { note: '自然损耗' }, '赵维修', 'repair')
+assert('维修角色不能定性 → 拒绝', rdmg.ok === false && /管理员/.test(rdmg.msg ?? ''))
+
+// F4. 继续调查允许（保持未定性）
+rdmg = kitchen.decideDamage(dr2.id, 'investigating', { note: '等待厂家检测铰链疲劳' }, '张管理', 'admin')
+assert('继续调查 → 允许且仍为 investigating', rdmg.ok && dr2.verdict === 'investigating')
+
+// F5. 补齐现场确认后定性维修扣费 → 押金与工单同步
+dr2.onSite.onSiteConfirmed = true
+dr2.onSite.note = '现场确认为本次使用中受力断裂'
+rdmg = kitchen.decideDamage(
+  dr2.id, 'charge',
+  { note: '对照 09-13 巡检正常、用前照片门体完好，认定本次人为损坏，换铰链 320 元', chargeAmount: 320 },
+  '张管理', 'admin'
+)
+assert('定性维修扣费成功', rdmg.ok === true)
+assert('报告 chargeAmount=320 且已入账', dr2.chargeAmount === 320 && dr2.chargePosted === true)
+// 押金仅 200，即时落账封顶在押金余额（320 中 200 扣押金、超出 120 验收时记录另行追偿）
+assert('维修扣费即时计入押金（封顶 ¥200）', (kitchen.bookingById('b-009')!.depositResult?.deduction ?? 0) === 200)
+assert('工单记录扣费定性', wo2.timeline.some((t) => t.action.includes('320')))
+
+// F6. 此时七项合格验收可提交，押金试算合并损坏费（无重复）
+rf = kitchen.submitAcceptance(b009, '张管理', 'admin', {
+  items: emptyAcceptanceItems().map((i) => ({ ...i, result: 'pass' as const })),
+  overtimeMinutes: 0,
+  cleaningExtraMinutes: 0,
+  overallComment: '卫生七项合格；烤箱门人为损坏已扣费'
+})
+assert('定性后验收成功', rf.ok === true)
+assert('押金扣费仍为 320（不与事件定损重复）', rf.deduction === 320, `deduction=${rf.deduction}`)
+assert('预约状态 completed', kitchen.bookingById('b-009')!.status === 'completed')
+
+// F7. 维修关闭工单 → 设备恢复，不再影响；通知链路保留
+const rw = kitchen.updateWorkOrder(
+  wo2.id,
+  { status: 'closed', affectsBookings: false, handleNote: '更换原厂铰链并校准门体' },
+  '赵维修', 'repair'
+)
+assert('维修可关闭工单', rw.ok === true)
+assert('关闭后 1号烤箱恢复可用', kitchen.resources.find((x) => x.id === 'r-o1')!.status === 'ok')
+assert('关闭后无未关闭的烤箱影响工单', !kitchen.typeBlockedByWorkOrder('oven'))
+
+// F8. 自然损耗场景：新登记一个锅具遗失，最终定性自然损耗不扣费
+kitchen.resetDemo()
+const depositBeforeLoss = kitchen.bookingById('b-009')!.depositResult
+const reg = kitchen.registerDamage(
+  'b-009',
+  {
+    resourceId: undefined,
+    resourceName: '30cm 不锈钢汤锅',
+    resourceType: 'tableware',
+    kind: 'loss',
+    title: '汤锅遗失',
+    detail: '验收清点发现 30cm 汤锅未归还，使用人称未使用该锅。',
+    photos: [photoD],
+    onSite: { userIdMatch: true, beforeNormal: true, onSiteConfirmed: true, note: '台账确认该锅在本次时段发放' },
+    affectsBookings: false,
+    estimatedRepairDays: 0,
+    repairCost: 80
+  },
+  '张管理'
+)
+assert('遗失登记成功并生成工单', reg.ok === true && !!reg.report?.workOrderId)
+const lossReport = reg.report!
+const lossWO = kitchen.workOrderById(lossReport.workOrderId)!
+rdmg = kitchen.decideDamage(lossReport.id, 'wear', { note: '锅具使用满 5 年且台账登记磨损，认定自然损耗/报损，不向使用人扣费' }, '张管理', 'admin')
+assert('自然损耗定性成功且费用为 0', rdmg.ok === true && lossReport.chargeAmount === 0)
+assert('自然损耗不产生押金扣费', (kitchen.bookingById('b-009')!.depositResult?.deduction ?? 0) === (depositBeforeLoss?.deduction ?? 0))
+assert('不影响后续预约 → 无通知新增', lossWO.affectsBookings === false)
+
+// F9. 同类活动自动限制：构造某类设备全部受影响停用
+kitchen.resetDemo()
+// 将全部灶台（r-s1..r-s4）登记影响工单：直接用 update 不可行（无工单），构造 registerDamage 两次较繁；
+// 改为把 r-s2/r-s3（剩余两台正常灶台）通过新损坏报告停用
+function blockStove(bookingId: string, resourceId: string) {
+  return kitchen.registerDamage(
+    bookingId,
+    {
+      resourceId,
+      resourceName: kitchen.resources.find((r) => r.id === resourceId)!.name,
+      resourceType: 'stove',
+      kind: 'damage',
+      title: '灶台故障停用',
+      detail: '测试同类限制',
+      photos: [photoD],
+      onSite: { userIdMatch: true, beforeNormal: true, onSiteConfirmed: true },
+      affectsBookings: true,
+      estimatedRepairDays: 2,
+      repairCost: 100
+    },
+    '张管理'
+  )
+}
+// r-s4 种子已在维修；再停用 r-s2、r-s3（r-s1 也停用）使全部灶台不可用
+blockStove('b-009', 'r-s2')
+blockStove('b-009', 'r-s3')
+blockStove('b-009', 'r-s1')
+const stoveWOs = kitchen.workOrders.filter((w) => w.resourceType === 'stove' && w.status !== 'closed' && w.affectsBookings)
+assert('全部灶台存在影响工单', kitchen.resources.filter((r) => r.type === 'stove' && r.status === 'ok').length === 0)
+assert('至少一个灶台工单自动标记 blockSameKind（同类活动限制）', stoveWOs.some((w) => w.blockSameKind))
+
+// 新建需要灶台的预约被自动限制
+const createR = kitchen.createBooking({
+  applicantId: U.wang,
+  applicantKind: 'resident',
+  contactName: '王秀兰',
+  contactPhone: '138-0000-1001',
+  activityKind: 'private',
+  title: '灶台停用期间的预约',
+  date: '2026-10-01',
+  startAt: '09:00',
+  endAt: '10:00',
+  peopleCount: 3,
+  cookingTypes: ['家常烹饪'],
+  isFrying: false,
+  storageNeeded: false,
+  equipmentNeeds: ['stove'],
+  depositFree: false
+})
+assert('同类设备全部停用时新建预约 → 拒绝并提示改期', createR.ok === false && /暂停同类活动预约/.test(createR.msg ?? ''))
+
+// F10. 通知自动生成：停用灶台后，需要灶台的后续预约收到通知
+const b006Notified = kitchen.equipmentNotifications.some((n) => n.bookingId === 'b-006' && n.resourceType === 'stove')
+assert('后续需要灶台的预约自动收到停用通知', b006Notified)
+
 console.log(`\n========== 结果：${pass} 通过，${fail} 失败 ==========`)
 if (fail > 0) process.exit(1)

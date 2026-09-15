@@ -18,8 +18,8 @@ export const seedResources: KitchenResource[] = [
   { id: 'r-s2', type: 'stove', name: '2号灶台', location: '烹饪区 A', status: 'ok', wear: 55 },
   { id: 'r-s3', type: 'stove', name: '3号灶台', location: '烹饪区 B', status: 'ok', wear: 18 },
   { id: 'r-s4', type: 'stove', name: '4号灶台', location: '烹饪区 B', status: 'repairing', wear: 88, note: '点火器故障待更换' },
-  { id: 'r-o1', type: 'oven', name: '1号烤箱', location: '烘焙区', status: 'ok', wear: 30 },
-  { id: 'r-o2', type: 'oven', name: '2号烤箱', location: '烘焙区', status: 'ok', wear: 61 },
+  { id: 'r-o1', type: 'oven', name: '1号烤箱', location: '烘焙区', status: 'repairing', wear: 72, note: '烤箱门铰链断裂（工单 WX-20260914-01），停用待修', lastInspectionAt: '2026-09-13 18:00', lastInspectionBy: '张管理', lastInspectionResult: '门体开合正常，温控校准合格（报修前最后一次巡检）' },
+  { id: 'r-o2', type: 'oven', name: '2号烤箱', location: '烘焙区', status: 'ok', wear: 61, lastInspectionAt: '2026-09-13 18:05', lastInspectionBy: '张管理', lastInspectionResult: '正常' },
   { id: 'r-f1', type: 'fridge', name: '公共冷藏柜 A', location: '暂存区', status: 'ok', wear: 25 },
   { id: 'r-f2', type: 'fridge', name: '冷冻柜 B', location: '暂存区', status: 'ok', wear: 38 },
   { id: 'r-x1', type: 'sterilizer', name: '1号消毒柜', location: '洗消区', status: 'ok', wear: 20 },
@@ -410,7 +410,7 @@ export const seedBookings: Booking[] = [
     status: 'approved',
     approverId: 'u-admin',
     approveComment: '已缴押金，按时到场核验。',
-    allocatedResourceIds: ['r-o1', 'r-f1', 'r-t1'],
+    allocatedResourceIds: ['r-o2', 'r-f1', 'r-t1'],
     storageItems: [],
     incidentIds: [],
     foodSafetyAck: true,
@@ -419,7 +419,8 @@ export const seedBookings: Booking[] = [
     timeline: [
       { at: '2026-09-12 19:30', actor: '李建国', action: '提交预约（押金 100 元）' },
       { at: '2026-09-12 20:00', actor: '张管理', action: '审批通过', tone: 'green' },
-      { at: '2026-09-13 21:00', actor: '李建国', action: '签署食品安全告知书', tone: 'blue' }
+      { at: '2026-09-13 21:00', actor: '李建国', action: '签署食品安全告知书', tone: 'blue' },
+      { at: '2026-09-14 12:25', actor: '系统', action: '1 号烤箱损坏停用，自动通知改派 2 号烤箱，预约人已确认', tone: 'amber' }
     ]
   },
   // 5. 待审批 · 商业试吃（社区工作人员审批，展示规则差异）
@@ -682,5 +683,188 @@ export const seedBookings: Booking[] = [
       { at: '2026-09-15 09:00', actor: '张管理', action: '食材超时未取，电话/短信通知负责人', tone: 'amber' },
       { at: '2026-09-15 10:00', actor: '张管理', action: '冷冻虾仁转为待处理食材，等待按食品安全规则处置', tone: 'red' }
     ]
+  },
+  // 9. 活动结束发现烤箱门损坏（待设备损坏验收 + 维修工单 + 通知下一位预约人）
+  {
+    id: 'b-009',
+    code: 'NK-20260914-006',
+    applicantId: 'u-res1',
+    applicantKind: 'resident',
+    contactName: '王秀兰',
+    contactPhone: '138-0000-1001',
+    activityKind: 'neighbor-feast',
+    title: '烘焙体验：手工面包分享',
+    date: '2026-09-14',
+    startAt: '09:00',
+    endAt: '12:00',
+    peopleCount: 12,
+    cookingTypes: ['烘焙'],
+    isFrying: false,
+    storageNeeded: false,
+    equipmentNeeds: ['oven', 'sterilizer', 'tableware'],
+    natureNote: '楼栋烘焙小组，使用 1 号烤箱。',
+    depositRequired: 200,
+    depositPaid: true,
+    depositFree: false,
+    status: 'closing',
+    approverId: 'u-admin',
+    approveComment: '同意，烤箱按规程操作。',
+    preCheck: {
+      checkerId: 'u-admin',
+      at: '2026-09-14 08:40',
+      identityOk: true,
+      healthPromise: true,
+      storageOk: true,
+      equipmentOk: true,
+      note: '使用前确认 1 号烤箱门开合正常。',
+      photos: [ph('♨️', '1号烤箱使用前照片', '张管理', '2026-09-14 08:40')]
+    },
+    allocatedResourceIds: ['r-o1', 'r-x1', 'r-t1'],
+    storageItems: [],
+    incidentIds: [],
+    foodSafetyAck: true,
+    foodSafetyAckAt: '2026-09-13 20:00',
+    createdAt: '2026-09-12 12:00',
+    timeline: [
+      { at: '2026-09-12 12:00', actor: '王秀兰', action: '提交烘焙体验预约（押金 200 元）' },
+      { at: '2026-09-12 13:00', actor: '张管理', action: '审批通过', tone: 'green' },
+      { at: '2026-09-14 08:40', actor: '张管理', action: '使用前核验，1 号烤箱正常', tone: 'green' },
+      { at: '2026-09-14 12:05', actor: '张管理', action: '活动结束发现 1 号烤箱门铰链断裂，登记设备损坏报告，等待责任定性', tone: 'red' }
+    ]
+  }
+]
+
+// ---------------- 设备损坏验收 ----------------
+export const seedDamageReports: import('@/types').DamageReport[] = [
+  // b-002 商业试吃烤盘划伤（历史：已扣费 160，工单关闭）
+  {
+    id: 'dr-1',
+    code: 'WS-20260910-01',
+    bookingId: 'b-002',
+    resourceId: 'r-o2',
+    resourceName: '2号烤箱原配烤盘',
+    resourceType: 'oven',
+    kind: 'damage',
+    title: '不粘烤盘涂层人为划伤',
+    detail: '团队使用金属铲导致涂层大面积划伤，无法再用于烘焙。',
+    reportedBy: '张管理',
+    reportedAt: '2026-09-10 16:10',
+    photos: [ph('🔧', '烤盘划伤照片', '赵维修', '2026-09-10 16:15')],
+    lastInspectionAt: '2026-09-09 18:00',
+    lastInspectionResult: '烤盘涂层完好',
+    onSite: { userIdMatch: true, beforeNormal: true, onSiteConfirmed: true, note: '使用前照片显示无划痕' },
+    verdict: 'charge',
+    decidedBy: '张管理',
+    decidedAt: '2026-09-10 18:45',
+    decisionNote: '认定人为损坏，更换烤盘 160 元计入押金。',
+    chargeAmount: 160,
+    chargePosted: true,
+    workOrderId: 'wo-1'
+  },
+  // b-009 烤箱门损坏（调查中 → 待管理员定性）
+  {
+    id: 'dr-2',
+    code: 'WS-20260914-01',
+    bookingId: 'b-009',
+    resourceId: 'r-o1',
+    resourceName: '1号烤箱',
+    resourceType: 'oven',
+    kind: 'damage',
+    title: '烤箱门铰链断裂、门体无法闭合',
+    detail: '活动结束验收时发现烤箱门下坠、无法闭合，温控仍可启动；现场有金属受力变形痕迹。使用人称开合时突然断裂。',
+    reportedBy: '张管理',
+    reportedAt: '2026-09-14 12:05',
+    photos: [
+      ph('♨️', '烤箱门损坏现场照', '张管理', '2026-09-14 12:05'),
+      ph('🔩', '断裂铰链特写', '赵维修', '2026-09-14 12:20')
+    ],
+    lastInspectionAt: '2026-09-13 18:00',
+    lastInspectionResult: '门体开合正常，温控校准合格（报修前最后一次巡检）',
+    onSite: { userIdMatch: true, beforeNormal: true, onSiteConfirmed: false, note: '使用人对“是否暴力关门”有异议，现场确认尚未完成' },
+    verdict: 'investigating',
+    chargeAmount: 0,
+    chargePosted: false,
+    workOrderId: 'wo-2'
+  }
+]
+
+export const seedWorkOrders: import('@/types').RepairWorkOrder[] = [
+  {
+    id: 'wo-1',
+    code: 'WX-20260910-02',
+    damageReportId: 'dr-1',
+    bookingId: 'b-002',
+    resourceId: 'r-o2',
+    resourceName: '2号烤箱原配烤盘',
+    resourceType: 'oven',
+    title: '更换划伤烤盘',
+    createdAt: '2026-09-10 16:20',
+    createdBy: '赵维修',
+    status: 'closed',
+    affectsBookings: false,
+    blockSameKind: false,
+    estimatedRepairDays: 1,
+    repairCost: 160,
+    handlerId: '赵维修',
+    handleNote: '已更换新烤盘，不影响烤箱主体使用。',
+    closedAt: '2026-09-10 17:20',
+    timeline: [
+      { at: '2026-09-10 16:20', actor: '赵维修', action: '维修工单建立', tone: 'red' },
+      { at: '2026-09-10 17:20', actor: '赵维修', action: '更换完成，工单关闭', tone: 'green' }
+    ]
+  },
+  {
+    id: 'wo-2',
+    code: 'WX-20260914-01',
+    damageReportId: 'dr-2',
+    bookingId: 'b-009',
+    resourceId: 'r-o1',
+    resourceName: '1号烤箱',
+    resourceType: 'oven',
+    title: '烤箱门铰链断裂维修',
+    createdAt: '2026-09-14 12:20',
+    createdBy: '赵维修',
+    status: 'repairing',
+    affectsBookings: true,
+    blockReason: '门体无法闭合存在烫伤风险，停用维修；2 号烤箱可承接改派',
+    blockSameKind: false,
+    estimatedRepairDays: 3,
+    repairCost: 320,
+    handlerId: '赵维修',
+    timeline: [
+      { at: '2026-09-14 12:05', actor: '张管理', action: '设备损坏报告登记，设备停用', tone: 'red' },
+      { at: '2026-09-14 12:20', actor: '赵维修', action: '维修工单建立，核定更换铰链约 320 元、预计 3 天，标记影响后续预约', tone: 'amber' }
+    ]
+  }
+]
+
+// 1 号烤箱停用后，系统对已分配/已申请烤箱的后续预约自动发出的通知
+export const seedEquipmentNotifications: import('@/types').EquipmentNotification[] = [
+  {
+    id: 'en-1',
+    workOrderId: 'wo-2',
+    resourceType: 'oven',
+    bookingId: 'b-004',
+    applicantId: 'u-res2',
+    channel: '站内',
+    sentAt: '2026-09-14 12:25',
+    sentBy: '系统',
+    message: '您 09-14 14:00 家庭烘焙原分配的 1 号烤箱因烤箱门损坏停用，已为您改派 2 号烤箱，请按时到场核验。',
+    status: 'responded',
+    response: 'change-equipment',
+    responseNote: '同意改用 2 号烤箱',
+    respondedAt: '2026-09-14 12:40'
+  },
+  {
+    id: 'en-2',
+    workOrderId: 'wo-2',
+    resourceType: 'oven',
+    bookingId: 'b-005',
+    applicantId: 'u-org2',
+    channel: '站内',
+    sentAt: '2026-09-14 12:25',
+    sentBy: '系统',
+    message: '您 09-16 商业试吃申请的烤箱设备中，1 号烤箱预计 3 天内无法使用；审批通过后将安排 2 号烤箱，请知悉，如需改期请联系管理员。',
+    status: 'pending'
   }
 ]

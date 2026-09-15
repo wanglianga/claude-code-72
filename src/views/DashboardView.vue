@@ -45,6 +45,11 @@ const myStorage = computed(() =>
 )
 const myAttentionCount = computed(() => myStorage.value.filter((x) => x.alert !== 'none').length)
 
+// 设备停用通知（本人）
+const myEquipNotices = computed(() =>
+  role.value === 'resident' ? kitchen.myEquipmentNotifications(user.value.id) : []
+)
+
 const myBookings = computed(() =>
   kitchen.bookings.filter((b) => b.applicantId === user.value.id).slice(0, 5)
 )
@@ -144,7 +149,58 @@ const greetings: Record<string, string> = {
       </table>
     </div>
 
-    <!-- 真实超时食材提醒（管理员）：只有超过预计取走时间 2 小时才进入此卡 -->
+    <!-- 设备损坏待定性（管理员） -->
+    <div v-if="role === 'admin' && kitchen.openDamageReports.length" class="card" style="border-left: 4px solid var(--c-red)">
+      <div class="card-title">
+        <h2>🔧 设备损坏验收待定性</h2>
+        <span class="tag red">{{ kitchen.openDamageReports.length }} 份报告</span>
+      </div>
+      <table class="data">
+        <tbody>
+          <tr
+            v-for="d in kitchen.openDamageReports"
+            :key="d.id"
+            class="clickable"
+            @click="push(`/booking/${d.bookingId}`)"
+          >
+            <td><strong>{{ d.resourceName }}</strong>：{{ d.title }}</td>
+            <td class="small">{{ kitchen.bookingById(d.bookingId)?.contactName }}</td>
+            <td class="tiny muted">{{ d.reportedAt }}</td>
+            <td><span class="tag amber">继续调查中，验收前须定性</span></td>
+            <td><a>去定性 →</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 维修工单（维修角色） -->
+    <div v-if="role === 'repair' && kitchen.openWorkOrders.length" class="card" style="border-left: 4px solid var(--c-amber)">
+      <div class="card-title">
+        <h2>🛠️ 我的维修工单</h2>
+        <span class="tag amber">{{ kitchen.openWorkOrders.length }} 单未关闭</span>
+      </div>
+      <table class="data">
+        <tbody>
+          <tr v-for="w in kitchen.openWorkOrders" :key="w.id" class="clickable" @click="push(`/booking/${w.bookingId}`)">
+            <td><strong>{{ w.code }}</strong> {{ w.title }}</td>
+            <td><span v-if="w.affectsBookings" class="tag red">影响后续预约</span></td>
+            <td class="small">成本 ¥{{ w.repairCost }} · {{ w.estimatedRepairDays }} 天</td>
+            <td><a>去处理 →</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 居民：设备停用通知 -->
+    <div v-if="role === 'resident' && myEquipNotices.length" class="card notice-dash">
+      <div class="card-title"><h2>📣 设备停用通知（需应答）</h2></div>
+      <div v-for="n in myEquipNotices" :key="n.id" class="notice-line" @click="push(`/booking/${n.bookingId}`)">
+        <div class="small">{{ n.message }}</div>
+        <div class="tiny muted">{{ n.sentAt }} · 点击进入预约详情选择改期/换设备</div>
+      </div>
+    </div>
+
+    <!-- 超时食材提醒（管理员）：只有超过预计取走时间 2 小时才进入此卡 -->
     <div v-if="trueOverdueStorage.length" class="card overdue-card">
       <div class="card-title">
         <h2>⏰ 食材暂存超时提醒</h2>
@@ -339,6 +395,8 @@ const greetings: Record<string, string> = {
 <style scoped>
 .overdue-card { border-left: 4px solid var(--c-red); }
 .canceled-card { border-left: 4px solid var(--c-amber); }
+.notice-dash { border-left: 4px solid var(--c-blue); }
+.notice-line { padding: 8px 10px; background: var(--c-blue-soft); border-radius: 7px; margin-bottom: 8px; cursor: pointer; }
 .rule-box {
   border: 1px solid var(--c-border); border-radius: 8px; padding: 12px;
   background: var(--c-surface-2); display: flex; flex-direction: column; gap: 7px;

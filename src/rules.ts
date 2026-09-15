@@ -164,3 +164,34 @@ export const MEAT_SEAFOOD_RULE = {
   ] as const,
   forbidClear: true // 肉类海鲜不允许简单「清空格位」，必须报废或取回
 }
+
+// ---------------- 设备损坏验收 ----------------
+export const DAMAGE_VERDICT_META: Record<
+  string,
+  { label: string; cls: string; desc: string }
+> = {
+  investigating: {
+    label: '继续调查',
+    cls: 'amber',
+    desc: '现场使用人对损坏责任有异议，或无法确认是否本次使用造成。工单挂起、费用暂不进入押金，验收完成前必须给出结论。'
+  },
+  charge: {
+    label: '维修扣费',
+    cls: 'red',
+    desc: '现场确认系本次使用人为损坏/遗失，由预约人按维修或重置成本承担，费用同步计入押金；设备进入维修工单。'
+  },
+  wear: {
+    label: '自然损耗',
+    cls: 'green',
+    desc: '对照上次巡检与使用年限，确认属自然老化/正常磨损，使用人不承担费用，由社区维修预算处理，仍生成维修工单跟进。'
+  },
+  resolved: { label: '已处理完成', cls: 'gray', desc: '工单关闭，设备已恢复或完成报损替换。' }
+}
+
+export const DAMAGE_KIND_META = {
+  damage: { label: '设备损坏', icon: '🔧' },
+  loss: { label: '器具遗失', icon: '🍽️' }
+} as const
+
+// 现场确认三项全部通过，管理员才能给出扣费/自然损耗的最终结论
+export const ONSITE_REQUIRED = ['确认本次使用人在场认可', '上次巡检时设备正常', '现场确认发生于本次使用'] as const

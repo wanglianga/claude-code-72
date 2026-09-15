@@ -77,6 +77,41 @@ if (!canSeeAll.value && tab.value === 'all') tab.value = 'mine'
       <div class="bx">你是预约人：可以在「预约记录」中查看<b>仅属于自己</b>的完整记录并跟进押金；使用中发现问题可在自己的预约详情页上报事件。</div>
     </div>
 
+    <!-- 设备损坏验收 / 维修工单 -->
+    <div v-if="(role === 'admin' && kitchen.openDamageReports.length) || (role === 'repair' && kitchen.openWorkOrders.length)" class="card">
+      <div class="card-title">
+        <h2>🔧 设备损坏验收与维修工单</h2>
+      </div>
+      <table class="data">
+        <thead><tr><th>编号</th><th>设备/事项</th><th>关联预约</th><th>影响</th><th>状态</th><th></th></tr></thead>
+        <tbody>
+          <template v-if="role === 'admin'">
+            <tr v-for="d in kitchen.openDamageReports" :key="d.id" class="clickable" @click="push(`/booking/${d.bookingId}`)">
+              <td class="mono small">{{ d.code }}</td>
+              <td><strong>{{ d.resourceName }}</strong>：{{ d.title }}</td>
+              <td class="small muted">{{ kitchen.bookingById(d.bookingId)?.title }}</td>
+              <td>{{ kitchen.workOrderById(d.workOrderId)?.affectsBookings ? '影响后续预约' : '不影响' }}</td>
+              <td><span class="tag amber">待定性</span></td>
+              <td><a>去定性 →</a></td>
+            </tr>
+          </template>
+          <template v-if="role === 'repair'">
+            <tr v-for="w in kitchen.openWorkOrders" :key="w.id" class="clickable" @click="push(`/booking/${w.bookingId}`)">
+              <td class="mono small">{{ w.code }}</td>
+              <td><strong>{{ w.resourceName }}</strong>：{{ w.title }}</td>
+              <td class="small muted">{{ kitchen.bookingById(w.bookingId)?.title }}</td>
+              <td>
+                <span v-if="w.affectsBookings" class="tag red">影响后续预约</span>
+                <span v-if="w.blockSameKind" class="tag red">同类活动已限制</span>
+              </td>
+              <td><span class="tag" :class="w.status === 'repairing' ? 'amber' : 'red'">{{ w.status === 'repairing' ? '维修中' : '待处理' }}</span></td>
+              <td><a>去处理 →</a></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
     <!-- 我的事件 -->
     <div v-if="tab === 'mine'" class="card">
       <div class="card-title"><h2>指派给我的事件</h2></div>

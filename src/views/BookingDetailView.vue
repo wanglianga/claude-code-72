@@ -26,8 +26,10 @@ import PhotoList from '@/components/PhotoList.vue'
 import IncidentCard from '@/components/IncidentCard.vue'
 import AcceptanceForm from '@/components/AcceptanceForm.vue'
 import StorageItemCard from '@/components/StorageItemCard.vue'
+import DamageReportCard from '@/components/DamageReportCard.vue'
 import { canViewBooking } from '@/utils/access'
 import { storageAlertKind } from '@/utils/storageAlert'
+import type { OnSiteCheck } from '@/types'
 
 const props = defineProps<{ id: string }>()
 const auth = useAuthStore()
@@ -116,6 +118,78 @@ const mf = reactive({ outcome: 'adjusted' as 'upheld' | 'adjusted' | 'rejected',
 const showPublicity = ref(false)
 const pf = reactive({ title: '', summary: '', board: true })
 const restrictNote = ref('')
+
+// ---------- 设备损坏验收 ----------
+const showDamage = ref(false)
+const dmg = reactive({
+  kind: 'damage' as 'damage' | 'loss',
+  resourceId: '',
+  resourceName: '',
+  title: '',
+  detail: '',
+  affectsBookings: true,
+  estimatedRepairDays: 2,
+  repairCost: 100,
+  onSite: { userIdMatch: true, beforeNormal: true, onSiteConfirmed: true, note: '' } as OnSiteCheck
+})
+const dmgPhotos = ref<Photo[]>([])
+const dmgErr = ref('')
+
+const damageReports = computed(() => (b.value ? kitchen.damageReportsOf(b.value.id) : []))
+const equipmentNotices = computed(() => (b.value ? kitchen.notificationsOfBooking(b.value.id) : []))
+
+function openDamage() {
+  dmg.kind = 'damage'
+  dmg.resourceId = ''
+  dmg.resourceName = ''
+  dmg.title = ''
+  dmg.detail = ''
+  dmg.affectsBookings = true
+  dmg.estimatedRepairDays = 2
+  dmg.repairCost = 100
+  dmg.onSite = { userIdMatch: true, beforeNormal: true, onSiteConfirmed: true, note: '' }
+  dmgPhotos.value = []
+  dmgErr.value = ''
+  showDamage.value = true
+}
+function doRegisterDamage() {
+  if (!b.value) return
+  dmgErr.value = ''
+  if (!dmg.resourceName.trim()) {
+    dmgErr.value = '请填写设备/器具名称'
+    return
+  }
+  const r = kitchen.registerDamage(
+    b.value.id,
+    {
+      resourceId: dmg.resourceId || undefined,
+      resourceName: dmg.resourceName,
+      resourceType: (dmg.resourceId
+        ? kitchen.resources.find((x) => x.id === dmg.resourceId)?.type
+        : undefined) ?? 'stove',
+      kind: dmg.kind,
+      title: dmg.title,
+      detail: dmg.detail,
+      photos: dmgPhotos.value,
+      onSite: dmg.onSite,
+      affectsBookings: dmg.affectsBookings,
+      estimatedRepairDays: Number(dmg.estimatedRepairDays),
+      repairCost: Number(dmg.repairCost)
+    },
+    me.value.name
+  )
+  if (!r.ok) {
+    dmgErr.value = r.msg ?? '登记失败'
+    return
+  }
+  showDamage.value = false
+}
+
+function respondNotice(nid: string, response: 'reschedule' | 'change-equipment' | 'cancel') {
+  const preset = response === 'reschedule' ? '申请改期，请联系协商' : response === 'cancel' ? '取消本次预约' : '同意改派同类设备'
+  const noteText = prompt('应答说明：', preset) ?? preset
+  kitchen.respondEquipmentNotification(nid, response, noteText, me.value.name)
+}
 
 // ---------- 资源分配候选 ----------
 const neededResources = computed(() => {
@@ -505,6 +579,41 @@ function toggleRestrict() {
           </div>
         </div>
 
+        <!-- 设备停用通知（给预约人） -->
+        <div v-if="equipmentNotices.length" class="card notice-card">
+          <div class="card-title"><h2>📣 设备停用通知</h2></div>
+          <div v-for="n in equipmentNotices" :key="n.id" class="notice-item">
+            <div class="small"><b>{{ n.message }}</b></div>
+            <div class="tiny muted">{{ n.sentBy }} · {{ n.sentAt }} · {{ n.channel }}通知</div>
+            <template v-if="n.status === 'pending'">
+              <div class="notice-actions">
+                <button class="btn sm primary" @click="respondNotice(n.id, 'reschedule')">📅 申请改期</button>
+                <button class="btn sm success" @click="respondNotice(n.id, 'change-equipment')">🔁 换设备</button>
+                <button class="btn sm danger" @click="respondNotice(n.id, 'cancel')">取消预约</button>
+              </div>
+            </template>
+            <div v-else class="small green">
+              已应答：{{ n.response === 'reschedule' ? '申请改期' : n.response === 'change-equipment' ? '同意换设备' : '取消预约' }}
+              <span v-if="n.responseNote">（{{ n.responseNote }}）</span> · {{ n.respondedAt }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 设备损坏验收 -->
+        <div v-if="['checked', 'closing', 'completed', 'canceled'].includes(b.status)" class="card">
+          <div class="card-title">
+            <h2>🔧 设备损坏验收</h2>
+            <button
+              v-if="isAdmin && ['closing', 'completed'].includes(b.status)"
+              class="btn danger sm"
+              style="margin-left: auto"
+              @click="openDamage"
+            >➕ 登记损坏/遗失</button>
+          </div>
+          <DamageReportCard v-for="d in damageReports" :key="d.id" :report="d" :booking="b" />
+          <div v-if="!damageReports.length" class="small muted">本次使用无设备损坏/器具遗失记录。</div>
+        </div>
+
         <!-- 逐项验收 -->
         <div v-if="b.status === 'closing' || b.acceptance" class="card">
           <div class="card-title">
@@ -775,8 +884,55 @@ function toggleRestrict() {
       </template>
     </BaseModal>
 
-    <BaseModal v-if="showPublicity" title="发布社区公示" @close="showPublicity = false">
+    <BaseModal v-if="showDamage" title="登记设备损坏 / 器具遗失" wide @close="showDamage = false">
       <div class="modal-body">
+        <div class="banner warn"><span>🔧</span><div class="bx">
+          登记将关联<b>本次使用人</b>，自动快照该设备<b>上次巡检</b>记录；同步建立维修工单，选择「影响后续预约」时系统自动停用设备并通知下一位预约人改期或换设备。
+        </div></div>
+        <div class="form-row">
+          <div class="field"><label>类型<span class="req">*</span></label>
+            <div class="seg">
+              <button :class="{ on: dmg.kind === 'damage' }" @click="dmg.kind = 'damage'">🔧 设备损坏</button>
+              <button :class="{ on: dmg.kind === 'loss' }" @click="dmg.kind = 'loss'">🍽️ 器具遗失</button>
+            </div>
+          </div>
+          <div class="field" style="flex: 2"><label>关联设备（器具遗失可手填不选）</label>
+            <select v-model="dmg.resourceId" @change="dmg.resourceName = kitchen.resources.find((r) => r.id === dmg.resourceId)?.name ?? dmg.resourceName">
+              <option value="">不关联具体资产</option>
+              <option v-for="r in kitchen.resources" :key="r.id" :value="r.id">{{ r.name }}（{{ r.status === 'repairing' ? '维修中' : '可用' }}）</option>
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>设备 / 器具名称<span class="req">*</span></label><input v-model="dmg.resourceName" placeholder="如：1号烤箱 / 30cm 汤锅" /></div>
+        <div class="field"><label>标题<span class="req">*</span></label><input v-model="dmg.title" placeholder="如：烤箱门铰链断裂" /></div>
+        <div class="field"><label>情况描述<span class="req">*</span></label><textarea v-model="dmg.detail" placeholder="现场情况、使用人陈述、发现时间"></textarea></div>
+
+        <div class="form-row">
+          <div class="field"><label>预计工期（天）</label><input type="number" min="0" v-model.number="dmg.estimatedRepairDays" /></div>
+          <div class="field"><label>维修/重置成本（元）</label><input type="number" min="0" v-model.number="dmg.repairCost" /></div>
+        </div>
+        <label class="checkbox"><input type="checkbox" v-model="dmg.affectsBookings" />
+          <span><b>影响后续预约</b>：停用该设备并自动通知下一位预约人；同类设备全部受影响时自动限制同类活动预约</span>
+        </label>
+
+        <h3 style="margin: 10px 0 4px">现场确认（三项全部通过才能最终定性扣费/自然损耗）</h3>
+        <label class="checkbox"><input type="checkbox" v-model="dmg.onSite.userIdMatch" /><span>确认本次使用人在场并认可</span></label>
+        <label class="checkbox"><input type="checkbox" v-model="dmg.onSite.beforeNormal" /><span>上次巡检 / 使用前核验时设备正常</span></label>
+        <label class="checkbox"><input type="checkbox" v-model="dmg.onSite.onSiteConfirmed" /><span>现场确认损坏/遗失发生于本次使用</span></label>
+        <div class="field" style="margin-top: 4px"><label>现场备注</label><input v-model="dmg.onSite.note" /></div>
+
+        <h3 style="margin: 10px 0 6px">设备照片（必传）</h3>
+        <PhotoCapture :by="me.name" @shot="(p) => dmgPhotos.push(p)" />
+        <div style="margin-top: 8px"><PhotoList :photos="dmgPhotos" /></div>
+        <div v-if="dmgErr" class="error-text">{{ dmgErr }}</div>
+      </div>
+      <template #footer>
+        <button class="btn" @click="showDamage = false">取消</button>
+        <button class="btn danger" @click="doRegisterDamage">登记并建立工单（暂挂调查）</button>
+      </template>
+    </BaseModal>
+
+    <BaseModal v-if="showPublicity" title="发布社区公示" @close="showPublicity = false">      <div class="modal-body">
         <div class="field"><label>公示标题<span class="req">*</span></label><input v-model="pf.title" /></div>
         <div class="field"><label>公示摘要<span class="req">*</span></label><textarea v-model="pf.summary" placeholder="活动内容、参与人数、卫生验收结果、（商业活动）收费性质"></textarea></div>
         <label class="checkbox"><input type="checkbox" v-model="pf.board" /><span>同步到线下社区公示栏</span></label>
@@ -816,6 +972,9 @@ function toggleRestrict() {
 .alloc-opt.disabled { opacity: .45; cursor: not-allowed; }
 .alloc-opt input { width: auto; }
 .action-card { border-left: 4px solid var(--c-brand); }
+.notice-card { border-left: 4px solid var(--c-blue); }
+.notice-item { padding: 8px 10px; background: var(--c-blue-soft); border-radius: 7px; margin-bottom: 8px; }
+.notice-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .forbidden {
   max-width: 620px; margin: 40px auto; text-align: center; padding: 36px 28px;
 }
